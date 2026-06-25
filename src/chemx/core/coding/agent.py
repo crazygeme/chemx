@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
-from typing import Sequence
+from typing import Callable, Sequence
 
 from ...backends import Message, ModelBackend
 from ..agent import Agent
@@ -24,6 +24,8 @@ from .plan import (
 from .workspace import CodingWorkspace
 
 logger = logging.getLogger(__name__)
+
+ProgressOutput = Callable[[str], None]
 
 
 CODING_SYSTEM_PROMPT = """You are a software engineering agent.
@@ -50,6 +52,7 @@ class CodingAgent(Agent):
     model: ModelBackend
     system_prompt: str = CODING_SYSTEM_PROMPT
     loop: CodingLoop = field(default_factory=CodingLoop)
+    progress_output: ProgressOutput | None = field(default=None, repr=False)
     current_run: CodingRun | None = field(default=None, init=False)
 
     def run(self, user_input: str) -> str:
@@ -71,7 +74,7 @@ class CodingAgent(Agent):
             self._complete_step(build_plan_prompt(task, context))
         )
         logger.info("model-generated coding plan created chars=%d", len(plan.text))
-        logger.debug("model-generated coding plan:\n%s", plan.text)
+        self._emit_progress(f"Plan:\n{plan.text}")
         return self._execute_model_loop(
             task,
             plan,
@@ -89,9 +92,11 @@ class CodingAgent(Agent):
     ) -> str:
         """Use an exact user-authored plan while the model selects actions."""
         logger.info("user-plan coding workflow started max_steps=%d", max_steps)
+        coding_plan = CodingPlan.from_user(plan)
+        self._emit_progress(f"Plan:\n{coding_plan.text}")
         return self._execute_model_loop(
             task,
-            CodingPlan.from_user(plan),
+            coding_plan,
             workspace,
             max_steps=max_steps,
         )
@@ -110,7 +115,9 @@ class CodingAgent(Agent):
         reinterpret the caller's instructions.
         """
         logger.info("explicit-action workflow started actions=%d", len(actions))
-        run = self._initialize_run(task, CodingPlan.from_user(plan), workspace)
+        coding_plan = CodingPlan.from_user(plan)
+        self._emit_progress(f"Plan:\n{coding_plan.text}")
+        run = self._initialize_run(task, coding_plan, workspace)
         for action in actions:
             self.loop.begin_action(run)
             logger.info(
@@ -118,13 +125,12 @@ class CodingAgent(Agent):
                 run.step,
                 action.kind.value,
             )
-            logger.debug(
-                "user-authored action step=%d:\n%s",
-                run.step,
-                _describe_action(action),
+            self._emit_progress(
+                f"Step {run.step}:\n{_describe_action(action)}"
             )
             result = workspace.execute(action)
             self.loop.record_result(run, result)
+            self._emit_result(run.step, result)
             if not result.success:
                 reason = (
                     f"User action {action.kind.value} failed at step {run.step}: "
@@ -160,26 +166,20 @@ class CodingAgent(Agent):
                     observations=run.results,
                 )
             )
-            logger.debug(
-                "model-selected coding step=%d:\n%s",
-                run.step + 1,
-                action_response,
-            )
             action = parse_action(action_response)
             logger.info(
                 "model selected action step=%d kind=%s",
                 run.step + 1,
                 action.kind.value,
             )
-            logger.debug(
-                "workspace action to execute step=%d:\n%s",
-                run.step + 1,
-                _describe_action(action),
+            self._emit_progress(
+                f"Step {run.step + 1}: {_describe_action(action)}"
             )
 
             self.loop.begin_action(run)
             result = workspace.execute(action)
             self.loop.record_result(run, result)
+            self._emit_result(run.step, result)
             logger.debug(
                 "workspace observation step=%d output_chars=%d",
                 run.step,
@@ -239,6 +239,14 @@ class CodingAgent(Agent):
             ]
         )
 
+    def _emit_progress(self, message: str) -> None:
+        if self.progress_output is not None:
+            self.progress_output(message)
+
+    def _emit_result(self, step: int, result: ActionResult) -> None:
+        status = "ok" if result.success else "failed"
+        self._emit_progress(f"Result {step} ({status}): {result.output}")
+
     @staticmethod
     def _deterministic_summary(run: CodingRun, diff: str) -> str:
         successful = sum(result.success for result in run.results)
@@ -265,4 +273,4 @@ def _describe_action(action: CodingAction) -> str:
             details.append(f"{field_name}: {value}")
     if action.command:
         details.append(f"command: {list(action.command)!r}")
-    return "\n".join(details)
+    return "; ".join(details)

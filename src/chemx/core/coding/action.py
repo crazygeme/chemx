@@ -93,20 +93,52 @@ class ActionResult:
 
 
 def parse_action(text: str) -> CodingAction:
-    """Parse a JSON action emitted by a model."""
+    """Parse one JSON action, tolerating explanatory text around the object."""
     normalized = text.strip()
     if normalized.startswith("```"):
         first_newline = normalized.find("\n")
         final_fence = normalized.rfind("```")
         if first_newline != -1 and final_fence > first_newline:
             normalized = normalized[first_newline + 1 : final_fence].strip()
+
     try:
         value = json.loads(normalized)
     except json.JSONDecodeError as error:
-        raise ValueError("Model action must be valid JSON.") from error
+        actions = _extract_actions(normalized)
+        if len(actions) == 1:
+            return actions[0]
+        if len(actions) > 1:
+            raise ValueError(
+                "Model response must contain exactly one JSON action."
+            ) from error
+        raise ValueError("Model action must contain a valid JSON object.") from error
+
     if not isinstance(value, dict):
         raise ValueError("Model action must be a JSON object.")
     return CodingAction.from_dict(value)
+
+
+def _extract_actions(text: str) -> list[CodingAction]:
+    """Find valid action objects embedded in otherwise non-JSON text."""
+    decoder = json.JSONDecoder()
+    actions = []
+    offset = 0
+    while True:
+        object_start = text.find("{", offset)
+        if object_start == -1:
+            return actions
+        try:
+            value, consumed = decoder.raw_decode(text, object_start)
+        except json.JSONDecodeError:
+            offset = object_start + 1
+            continue
+        offset = consumed
+        if not isinstance(value, dict):
+            continue
+        try:
+            actions.append(CodingAction.from_dict(value))
+        except ValueError:
+            continue
 
 
 def _optional_string(value: Any) -> str | None:

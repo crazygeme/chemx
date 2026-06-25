@@ -45,6 +45,30 @@ class InteractiveSession(Protocol):
         """Clear retained session state."""
 
 
+@dataclass
+class _CodingOutput:
+    """Render one coding turn beneath a single ``chemx>`` prefix."""
+
+    started: bool = False
+
+    def begin(self) -> None:
+        self.started = False
+
+    def progress(self, message: str) -> None:
+        if self.started:
+            print(message)
+        else:
+            print(f"chemx> {message}")
+            self.started = True
+
+    def finish(self, response: str) -> None:
+        if self.started:
+            print(response)
+        else:
+            print(f"chemx> {response}")
+        self.started = False
+
+
 class _NoModelBackend:
     """Sentinel backend for strict user-plan execution."""
 
@@ -154,6 +178,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     configure_logging(args.verbose)
     model_name = args.model or get_backend_registration(args.provider).default_model
+    coding_output = _CodingOutput()
 
     if (args.plan_file or args.actions_file) and args.task is None:
         print(
@@ -184,13 +209,15 @@ def main(argv: Sequence[str] | None = None) -> int:
             agent = CodingAgent(
                 model=_NoModelBackend(),
                 system_prompt=args.system_prompt or profile.default_system_prompt,
+                progress_output=coding_output.progress,
             )
+            coding_output.begin()
             response = agent.run_actions(args.task, plan, actions, workspace)
         except (OSError, RuntimeError, ValueError) as error:
             print(f"Workspace error: {error}", file=sys.stderr)
             return 2
         print("chemx: coding using explicit user actions")
-        print(f"chemx> {response}")
+        coding_output.finish(response)
         return 0
 
     try:
@@ -210,6 +237,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         backend,
         system_prompt=args.system_prompt,
     )
+    if isinstance(agent, CodingAgent):
+        agent.progress_output = coding_output.progress
     print(f"chemx: {args.agent} using {args.provider}/{model_name}")
 
     if args.task is not None:
@@ -217,6 +246,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise RuntimeError("Coding profile did not create a CodingAgent.")
         try:
             workspace = _create_local_workspace(args)
+            coding_output.begin()
             if args.plan_file:
                 plan = Path(args.plan_file).read_text(encoding="utf-8")
                 response = agent.run_plan(
@@ -234,7 +264,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         except (OSError, RuntimeError, ValueError) as error:
             print(f"Workspace error: {error}", file=sys.stderr)
             return 2
-        print(f"chemx> {response}")
+        coding_output.finish(response)
         return 0
 
     session: InteractiveSession = agent
@@ -270,12 +300,17 @@ def main(argv: Sequence[str] | None = None) -> int:
             continue
 
         try:
+            if isinstance(agent, CodingAgent):
+                coding_output.begin()
             response = session.run(user_input)
         except (ModelError, RuntimeError, ValueError) as error:
             print(f"error: {error}", file=sys.stderr)
             continue
 
-        print(f"chemx> {response}")
+        if isinstance(agent, CodingAgent):
+            coding_output.finish(response)
+        else:
+            print(f"chemx> {response}")
 
 
 def _create_local_workspace(args: argparse.Namespace) -> LocalWorkspace:
@@ -290,7 +325,7 @@ def _approve_command(command: tuple[str, ...]) -> bool:
     """Ask for explicit permission before running a workspace command."""
     try:
         answer = input(
-            f"chemx> Allow command `{shlex.join(command)}`? [y/N] "
+            f"Allow command `{shlex.join(command)}`? [y/N] "
         )
     except (EOFError, KeyboardInterrupt):
         print()

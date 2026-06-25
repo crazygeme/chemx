@@ -1,10 +1,12 @@
 import unittest
-from unittest.mock import ANY, Mock, patch
+from contextlib import redirect_stdout
+from io import StringIO
+from unittest.mock import Mock, patch
 
 from chemx.backends import Message
 from chemx.core import ChemicalsAgent, CodingAgent
 from chemx.frontends.cli import build_parser, create_agent, main
-from chemx.frontends.cli.app import _approve_command
+from chemx.frontends.cli.app import _approve_command, _CodingOutput
 
 
 class StaticModel:
@@ -89,8 +91,10 @@ class CliFrontendTests(unittest.TestCase):
         create_backend.assert_called_once()
         prepare_backend.assert_called_once()
         create_workspace.assert_called_once()
+        coding_agent = create_session.call_args.args[0]
+        self.assertIsNotNone(coding_agent.progress_output)
         create_session.assert_called_once_with(
-            ANY,
+            coding_agent,
             workspace,
             max_steps=7,
         )
@@ -103,13 +107,30 @@ class CliFrontendTests(unittest.TestCase):
 
         self.assertTrue(approved)
         input_mock.assert_called_once_with(
-            "chemx> Allow command `gcc -o hello hello.c`? [y/N] "
+            "Allow command `gcc -o hello hello.c`? [y/N] "
         )
 
     @patch("builtins.input", return_value="")
     def test_command_approval_defaults_to_denied(self, input_mock: Mock) -> None:
         self.assertFalse(_approve_command(("make",)))
         input_mock.assert_called_once()
+
+    def test_coding_output_uses_one_prefix_per_turn(self) -> None:
+        output = _CodingOutput()
+        stream = StringIO()
+
+        with redirect_stdout(stream):
+            output.begin()
+            output.progress("Plan:\nCreate hello.c")
+            output.progress("Step 1:\nkind: create_file")
+            output.progress("Result 1 (ok):\nCreated hello.c.")
+            output.finish("Task complete.")
+
+        rendered = stream.getvalue()
+        self.assertEqual(rendered.count("chemx>"), 1)
+        self.assertIn("chemx> Plan:", rendered)
+        self.assertIn("Step 1:", rendered)
+        self.assertIn("Task complete.", rendered)
 
     @patch("builtins.input", side_effect=["Explain the sample", "/exit"])
     @patch("chemx.frontends.cli.app._create_local_workspace")

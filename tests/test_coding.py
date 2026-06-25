@@ -50,14 +50,43 @@ def action_response(kind: str, **values: object) -> str:
 
 
 class CodingAgentTests(unittest.TestCase):
-    def test_debug_logging_describes_plan_and_actions(self) -> None:
+    def test_progress_output_reports_plan_steps_commands_and_results(self) -> None:
+        messages: list[str] = []
+        model = StaticModel(
+            "1. Read parser.py.\n2. Run tests.",
+            action_response("read_file", path="src/parser.py"),
+            action_response(
+                "run_command",
+                command=["python3", "-m", "unittest"],
+            ),
+            action_response("finish", message="Complete."),
+            "Reviewed and tested parser.py.",
+        )
+        agent = CodingAgent(model=model, progress_output=messages.append)
+
+        agent.run_workflow("Review parser", RecordingWorkspace())
+
+        output = "\n".join(messages)
+        self.assertIn("Plan:\n1. Read parser.py.", output)
+        self.assertIn("Step 1: kind: read_file", output)
+        self.assertIn("path: src/parser.py", output)
+        self.assertIn("Result 1 (ok):", output)
+        self.assertIn("Step 2: kind: run_command", output)
+        self.assertIn(
+            "command: ['python3', '-m', 'unittest']",
+            output,
+        )
+        self.assertIn("All tests passed.", output)
+
+    def test_debug_logging_keeps_plan_and_actions_in_progress_output(self) -> None:
+        progress: list[str] = []
         model = StaticModel(
             "1. Read parser.py.\n2. Finish.",
             action_response("read_file", path="src/parser.py"),
             action_response("finish", message="Review complete."),
             "Reviewed parser.py.",
         )
-        agent = CodingAgent(model=model)
+        agent = CodingAgent(model=model, progress_output=progress.append)
 
         with self.assertLogs(
             "chemx.core.coding.agent",
@@ -67,11 +96,10 @@ class CodingAgentTests(unittest.TestCase):
 
         output = "\n".join(logs.output)
         self.assertIn("model-generated coding plan", output)
-        self.assertIn("1. Read parser.py.", output)
-        self.assertIn("model-selected coding step=1", output)
-        self.assertIn('"kind": "read_file"', output)
-        self.assertIn("workspace action to execute step=1", output)
-        self.assertIn("path: src/parser.py", output)
+        self.assertNotIn("1. Read parser.py.", output)
+        self.assertNotIn('"kind": "read_file"', output)
+        self.assertIn("1. Read parser.py.", "\n".join(progress))
+        self.assertIn("path: src/parser.py", "\n".join(progress))
 
     def test_action_prompt_explains_direct_command_approval(self) -> None:
         model = StaticModel(
@@ -104,6 +132,38 @@ class CodingAgentTests(unittest.TestCase):
         response = session.run("Review parser")
 
         self.assertEqual(response, "No changes were required.")
+        self.assertEqual(workspace.actions[0].kind, ActionKind.FINISH)
+
+    def test_coding_session_treats_good_job_as_conversation(self) -> None:
+        model = StaticModel("Thanks!")
+        workspace = RecordingWorkspace()
+        session = CodingSession(
+            agent=CodingAgent(model=model),
+            workspace=workspace,
+        )
+
+        response = session.run("good job")
+
+        self.assertEqual(response, "Thanks!")
+        self.assertEqual(workspace.actions, [])
+        self.assertEqual(len(model.calls), 1)
+        self.assertEqual(model.calls[0][-1].content, "good job")
+
+    def test_coding_session_does_not_misclassify_task_with_praise(self) -> None:
+        model = StaticModel(
+            "Update the parser.",
+            action_response("finish", message="Complete."),
+            "Parser update complete.",
+        )
+        workspace = RecordingWorkspace()
+        session = CodingSession(
+            agent=CodingAgent(model=model),
+            workspace=workspace,
+        )
+
+        response = session.run("Good job, now update the parser")
+
+        self.assertEqual(response, "Parser update complete.")
         self.assertEqual(workspace.actions[0].kind, ActionKind.FINISH)
 
     def test_model_plan_is_natural_language_then_actions_are_structured(self) -> None:

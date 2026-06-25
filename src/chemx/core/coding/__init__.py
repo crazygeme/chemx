@@ -1,7 +1,7 @@
 """Coding-specific agent behavior and run-loop state."""
 
 from .action import ActionKind, ActionResult, CodingAction, parse_action
-from .agent import CODING_SYSTEM_PROMPT, CodingAgent
+from .agent import CODING_SYSTEM_PROMPT, CodingAgent, ProgressOutput
 from .local_workspace import LocalWorkspace
 from .loop import CodingLoop, CodingPhase, CodingRun
 from .plan import CodingPlan, PlanSource
@@ -22,6 +22,7 @@ __all__ = [
     "CodingWorkspace",
     "LocalWorkspace",
     "PlanSource",
+    "ProgressOutput",
     "create_coding_session",
     "parse_action",
 ]

@@ -144,10 +144,10 @@ chemx -vv --task "Fix the parser"
 ```
 
 Logs are written to standard error; normal agent output remains on standard
-output. At `-vv`, coding workflows also log the generated plan, each
-model-selected step, and the parsed workspace action before execution. File
-content included in actions is visible and should be treated as sensitive
-diagnostic output. Backend request and response bodies are not logged.
+output. Coding workflows always show the generated plan, each selected action,
+and its workspace result as normal output; `-v` is not required. File content
+included in actions is visible and should be treated as sensitive output.
+Backend request and response bodies are not logged.
 
 During an interactive session:
 

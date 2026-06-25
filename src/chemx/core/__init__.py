@@ -22,6 +22,7 @@ from .coding import (
     CodingWorkspace,
     LocalWorkspace,
     PlanSource,
+    ProgressOutput,
     create_coding_session,
     parse_action,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "DEFAULT_SYSTEM_PROMPT",
     "LocalWorkspace",
     "PlanSource",
+    "ProgressOutput",
     "create_coding_session",
     "parse_action",
 ]
