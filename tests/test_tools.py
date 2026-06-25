@@ -104,7 +104,45 @@ class CommonToolTests(unittest.TestCase):
 
         result = SearchTool(self.paths).run("needle")
 
-        self.assertIn("example.txt", result)
+        self.assertEqual(result, "example.txt:1:needle")
+
+    def test_search_tool_honors_nested_gitignore_rules(self) -> None:
+        writer = WriteTool(self.paths)
+        writer.create(".gitignore", "*.log\n!important.log\n")
+        writer.create("src/.gitignore", "generated/\n")
+        writer.create("src/example.py", "needle\n")
+        writer.create("src/debug.log", "needle\n")
+        writer.create("src/important.log", "needle\n")
+        writer.create("src/generated/output.py", "needle\n")
+
+        result = SearchTool(self.paths).run("needle")
+
+        self.assertEqual(
+            result,
+            "src/example.py:1:needle\nsrc/important.log:1:needle",
+        )
+
+    def test_search_tool_falls_back_to_case_insensitive_substring(self) -> None:
+        WriteTool(self.paths).create("example.txt", "NeedleStack\n")
+
+        result = SearchTool(self.paths).run("needlestack")
+
+        self.assertEqual(result, "example.txt:1:NeedleStack")
+
+    def test_search_tool_treats_invalid_regex_as_literal_substring(self) -> None:
+        WriteTool(self.paths).create("example.txt", "value[0]\n")
+
+        result = SearchTool(self.paths).run("value[")
+
+        self.assertEqual(result, "example.txt:1:value[0]")
+
+    def test_search_tool_skips_non_utf8_files(self) -> None:
+        (self.root / "binary.dat").write_bytes(b"\xff\xfe\x00")
+        WriteTool(self.paths).create("example.txt", "needle\n")
+
+        result = SearchTool(self.paths).run("needle")
+
+        self.assertEqual(result, "example.txt:1:needle")
 
     def test_bash_tool_is_disabled_by_default(self) -> None:
         with self.assertRaisesRegex(ValueError, "disabled"):

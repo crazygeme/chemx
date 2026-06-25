@@ -20,9 +20,16 @@ class StaticModel:
     def __init__(self, *responses: str) -> None:
         self.responses = iter(responses)
         self.calls: list[list[Message]] = []
+        self.response_schemas: list[object] = []
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_schema: object = None,
+    ) -> str:
         self.calls.append(list(messages))
+        self.response_schemas.append(response_schema)
         return next(self.responses)
 
 
@@ -99,6 +106,10 @@ class WorkflowRouterTests(unittest.TestCase):
         self.assertEqual(route.kind, WorkflowKind.CONVERSATION)
         self.assertEqual(route.objective, "Explain the architecture")
         self.assertIn("Return one JSON object only", model.calls[0][-1].content)
+        self.assertEqual(
+            model.response_schemas[0]["required"],
+            ["kind", "objective", "confidence"],
+        )
 
     def test_invalid_model_route_is_rejected(self) -> None:
         model = StaticModel('{"kind":"unknown"}')

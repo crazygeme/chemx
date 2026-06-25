@@ -6,6 +6,7 @@ from chemx.backends import (
     DeepSeekBackend,
     OllamaBackend,
     OpenAIBackend,
+    ToolDefinition,
     available_backends,
     create_backend,
     get_backend_registration,
@@ -60,7 +61,7 @@ class ModelFactoryTests(unittest.TestCase):
                 create_backend("deepseek", "deepseek-v4-flash")
 
     @patch("chemx.backends.deepseek.backend.post_json")
-    def test_deepseek_uses_openai_compatible_chat_endpoint(
+    def test_deepseek_allows_unstructured_prose_responses(
         self,
         post_json: Mock,
     ) -> None:
@@ -85,6 +86,203 @@ class ModelFactoryTests(unittest.TestCase):
             headers={"Authorization": "Bearer secret"},
             timeout=60.0,
         )
+
+    @patch("chemx.backends.deepseek.backend.post_json")
+    def test_deepseek_uses_json_mode_when_schema_is_requested(
+        self,
+        post_json: Mock,
+    ) -> None:
+        post_json.return_value = {
+            "choices": [{"message": {"content": '{"result":"ok"}'}}]
+        }
+        backend = DeepSeekBackend(
+            model="deepseek-v4-flash",
+            api_key="secret",
+        )
+
+        backend.complete([], response_schema={"type": "object"})
+
+        self.assertEqual(
+            post_json.call_args.kwargs["payload"]["response_format"],
+            {"type": "json_object"},
+        )
+
+    @patch("chemx.backends.openai.backend.post_json")
+    def test_openai_allows_unstructured_prose_responses(
+        self,
+        post_json: Mock,
+    ) -> None:
+        post_json.return_value = {
+            "choices": [{"message": {"content": '{"result":"ok"}'}}]
+        }
+        backend = OpenAIBackend(model="example-model", api_key="secret")
+
+        response = backend.complete([])
+
+        self.assertEqual(response, '{"result":"ok"}')
+        self.assertNotIn(
+            "response_format",
+            post_json.call_args.kwargs["payload"],
+        )
+
+    @patch("chemx.backends.openai.backend.post_json")
+    def test_openai_uses_strict_json_schema_when_supplied(
+        self,
+        post_json: Mock,
+    ) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"result": {"type": "string"}},
+            "required": ["result"],
+            "additionalProperties": False,
+        }
+        post_json.return_value = {
+            "choices": [{"message": {"content": '{"result":"ok"}'}}]
+        }
+        backend = OpenAIBackend(model="example-model", api_key="secret")
+
+        backend.complete([], response_schema=schema)
+
+        self.assertEqual(
+            post_json.call_args.kwargs["payload"]["response_format"],
+            {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "chemx_response",
+                    "strict": True,
+                    "schema": schema,
+                },
+            },
+        )
+
+    @patch("chemx.backends.openai.backend.post_json")
+    def test_openai_forces_one_strict_native_tool_call(
+        self,
+        post_json: Mock,
+    ) -> None:
+        post_json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "read_file",
+                                    "arguments": '{"path":"src/app.py"}',
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        backend = OpenAIBackend(model="example-model", api_key="secret")
+        tool = ToolDefinition(
+            "read_file",
+            "Read one file.",
+            {
+                "type": "object",
+                "properties": {"path": {"type": "string"}},
+                "required": ["path"],
+                "additionalProperties": False,
+            },
+        )
+
+        selected = backend.complete_tool([], [tool])
+
+        self.assertEqual(selected.name, "read_file")
+        self.assertEqual(selected.arguments, {"path": "src/app.py"})
+        payload = post_json.call_args.kwargs["payload"]
+        self.assertEqual(payload["tool_choice"], "required")
+        self.assertFalse(payload["parallel_tool_calls"])
+        self.assertTrue(payload["tools"][0]["function"]["strict"])
+
+    @patch("chemx.backends.deepseek.backend.post_json")
+    def test_deepseek_reads_one_native_tool_call(self, post_json: Mock) -> None:
+        post_json.return_value = {
+            "choices": [
+                {
+                    "message": {
+                        "tool_calls": [
+                            {
+                                "function": {
+                                    "name": "git_status",
+                                    "arguments": "{}",
+                                }
+                            }
+                        ]
+                    }
+                }
+            ]
+        }
+        backend = DeepSeekBackend(
+            model="deepseek-v4-flash",
+            api_key="secret",
+        )
+        tool = ToolDefinition("git_status", "Show status.", {"type": "object"})
+
+        selected = backend.complete_tool([], [tool])
+
+        self.assertEqual(selected.name, "git_status")
+        self.assertEqual(selected.arguments, {})
+        payload = post_json.call_args.kwargs["payload"]
+        self.assertIn("tools", payload)
+        self.assertEqual(payload["tool_choice"], "required")
+        self.assertEqual(payload["thinking"], {"type": "disabled"})
+
+    @patch("chemx.backends.ollama.backend.post_json")
+    def test_ollama_allows_unstructured_prose_responses(
+        self,
+        post_json: Mock,
+    ) -> None:
+        post_json.return_value = {"message": {"content": '{"result":"ok"}'}}
+        backend = OllamaBackend(model="llama3.2")
+
+        response = backend.complete([])
+
+        self.assertEqual(response, '{"result":"ok"}')
+        self.assertNotIn("format", post_json.call_args.kwargs["payload"])
+
+    @patch("chemx.backends.ollama.backend.post_json")
+    def test_ollama_uses_json_schema_when_supplied(self, post_json: Mock) -> None:
+        schema = {
+            "type": "object",
+            "properties": {"result": {"type": "string"}},
+            "required": ["result"],
+        }
+        post_json.return_value = {"message": {"content": '{"result":"ok"}'}}
+        backend = OllamaBackend(model="llama3.2")
+
+        backend.complete([], response_schema=schema)
+
+        self.assertIs(post_json.call_args.kwargs["payload"]["format"], schema)
+
+    @patch("chemx.backends.ollama.backend.post_json")
+    def test_ollama_reads_one_native_tool_call(self, post_json: Mock) -> None:
+        post_json.return_value = {
+            "message": {
+                "tool_calls": [
+                    {
+                        "function": {
+                            "name": "search_text",
+                            "arguments": {"query": "needle"},
+                        }
+                    }
+                ]
+            }
+        }
+        backend = OllamaBackend(model="llama3.2")
+        tool = ToolDefinition(
+            "search_text",
+            "Search text.",
+            {"type": "object"},
+        )
+
+        selected = backend.complete_tool([], [tool])
+
+        self.assertEqual(selected.name, "search_text")
+        self.assertEqual(selected.arguments, {"query": "needle"})
+        self.assertIn("tools", post_json.call_args.kwargs["payload"])
 
     def test_registration_adds_backend_without_factory_branching(self) -> None:
         class ExampleBackend:

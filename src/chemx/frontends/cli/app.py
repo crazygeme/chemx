@@ -75,7 +75,12 @@ class _NoModelBackend:
 
     context_window_tokens = 32_768
 
-    def complete(self, messages: Sequence[object]) -> str:
+    def complete(
+        self,
+        messages: Sequence[object],
+        *,
+        response_schema: object = None,
+    ) -> str:
         raise RuntimeError("Strict user-plan mode does not permit model calls.")
 
 
@@ -150,8 +155,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--max-steps",
         type=int,
-        default=20,
-        help="maximum model-selected tool actions per coding task (default: 20)",
+        default=50,
+        help="maximum model-selected tool actions per coding task (default: 50)",
     )
     parser.add_argument(
         "-v",

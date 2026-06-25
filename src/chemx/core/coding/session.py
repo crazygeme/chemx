@@ -14,7 +14,7 @@ class CodingSession:
 
     agent: CodingAgent
     workspace: CodingWorkspace
-    max_steps: int = 20
+    max_steps: int = 50
     router: WorkflowRouter | None = None
     document_agent: CodingAgent | None = None
 
@@ -61,7 +61,7 @@ def create_coding_session(
     agent: CodingAgent,
     workspace: CodingWorkspace,
     *,
-    max_steps: int = 20,
+    max_steps: int = 50,
 ) -> CodingSession:
     """Bind a coding agent to the policy used for interactive tasks."""
     return CodingSession(

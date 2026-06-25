@@ -11,7 +11,12 @@ class StaticModel:
         self.response = response
         self.calls: list[list[Message]] = []
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_schema: object = None,
+    ) -> str:
         self.calls.append(list(messages))
         return self.response
 

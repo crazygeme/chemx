@@ -5,7 +5,151 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from enum import Enum
-from typing import Any
+from typing import Any, Sequence
+
+from ...backends import ToolCall, ToolDefinition
+
+
+ACTION_RESPONSE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": [
+                "list_files",
+                "read_file",
+                "search_text",
+                "replace_text",
+                "create_file",
+                "write_file",
+                "run_command",
+                "bash",
+                "git_status",
+                "finish",
+            ],
+        },
+        "path": {"type": ["string", "null"]},
+        "query": {"type": ["string", "null"]},
+        "old_text": {"type": ["string", "null"]},
+        "new_text": {"type": ["string", "null"]},
+        "content": {"type": ["string", "null"]},
+        "command": {
+            "type": "array",
+            "items": {"type": "string"},
+        },
+        "script": {"type": ["string", "null"]},
+        "message": {"type": ["string", "null"]},
+    },
+    "required": [
+        "kind",
+        "path",
+        "query",
+        "old_text",
+        "new_text",
+        "content",
+        "command",
+        "script",
+        "message",
+    ],
+    "additionalProperties": False,
+}
+
+_NO_ARGUMENTS: dict[str, object] = {
+    "type": "object",
+    "properties": {},
+    "required": [],
+    "additionalProperties": False,
+}
+
+
+def _arguments(
+    properties: dict[str, object],
+    *,
+    required: Sequence[str] | None = None,
+) -> dict[str, object]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": list(required if required is not None else properties),
+        "additionalProperties": False,
+    }
+
+
+ACTION_TOOLS: tuple[ToolDefinition, ...] = (
+    ToolDefinition(
+        "list_files",
+        "List workspace files, optionally beneath one relative directory.",
+        _arguments({"path": {"type": ["string", "null"]}}),
+    ),
+    ToolDefinition(
+        "read_file",
+        "Read one workspace-relative text file.",
+        _arguments({"path": {"type": "string"}}),
+    ),
+    ToolDefinition(
+        "search_text",
+        "Search workspace text files for a regex or substring.",
+        _arguments({"query": {"type": "string"}}),
+    ),
+    ToolDefinition(
+        "replace_text",
+        "Replace one exact text occurrence in a workspace file.",
+        _arguments(
+            {
+                "path": {"type": "string"},
+                "old_text": {"type": "string"},
+                "new_text": {"type": "string"},
+            }
+        ),
+    ),
+    ToolDefinition(
+        "create_file",
+        "Create a new workspace file without overwriting an existing file.",
+        _arguments(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            }
+        ),
+    ),
+    ToolDefinition(
+        "write_file",
+        "Write the complete contents of a workspace file.",
+        _arguments(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+            }
+        ),
+    ),
+    ToolDefinition(
+        "run_command",
+        "Run a command as an argument array after approval.",
+        _arguments(
+            {
+                "command": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                }
+            }
+        ),
+    ),
+    ToolDefinition(
+        "bash",
+        "Run a Bash script when the workspace explicitly enables Bash.",
+        _arguments({"script": {"type": "string"}}),
+    ),
+    ToolDefinition(
+        "git_status",
+        "Inspect Git working-tree status.",
+        _NO_ARGUMENTS,
+    ),
+    ToolDefinition(
+        "finish",
+        "Finish the workflow with a factual completion message.",
+        _arguments({"message": {"type": "string"}}),
+    ),
+)
 
 
 class ActionKind(str, Enum):
@@ -67,6 +211,11 @@ class CodingAction:
         )
         action.validate()
         return action
+
+    @classmethod
+    def from_tool_call(cls, call: ToolCall) -> "CodingAction":
+        """Convert one native model tool call into a validated action."""
+        return cls.from_dict({"kind": call.name, **call.arguments})
 
     def validate(self) -> None:
         """Validate fields required by this action kind."""

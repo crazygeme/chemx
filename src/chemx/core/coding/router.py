@@ -10,6 +10,25 @@ from ...backends import Message, ModelBackend
 from ..context import ContextPolicy, fit_messages
 
 
+WORKFLOW_ROUTE_SCHEMA: dict[str, object] = {
+    "type": "object",
+    "properties": {
+        "kind": {
+            "type": "string",
+            "enum": ["conversation", "coding", "document"],
+        },
+        "objective": {"type": "string"},
+        "confidence": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+        },
+    },
+    "required": ["kind", "objective", "confidence"],
+    "additionalProperties": False,
+}
+
+
 class WorkflowKind(str, Enum):
     """Interactive workflows available to a routed session."""
 
@@ -77,7 +96,10 @@ class WorkflowRouter:
             current=Message(role="user", content=prompt),
             policy=self.context_policy,
         )
-        response = self.model.complete(messages).strip()
+        response = self.model.complete(
+            messages,
+            response_schema=WORKFLOW_ROUTE_SCHEMA,
+        ).strip()
         try:
             value = json.loads(response)
             if not isinstance(value, dict):

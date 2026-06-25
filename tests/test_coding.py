@@ -2,7 +2,7 @@ import json
 import logging
 import unittest
 
-from chemx.backends import Message
+from chemx.backends import Message, ToolCall
 from chemx.core.coding import (
     ActionKind,
     ActionResult,
@@ -21,10 +21,32 @@ class StaticModel:
     def __init__(self, *responses: str) -> None:
         self.responses = iter(responses)
         self.calls: list[list[Message]] = []
+        self.response_schemas: list[object] = []
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_schema: object = None,
+    ) -> str:
         self.calls.append(list(messages))
+        self.response_schemas.append(response_schema)
         return next(self.responses)
+
+
+class NativeToolModel(StaticModel):
+    def __init__(
+        self,
+        responses: tuple[str, ...],
+        tool_calls: tuple[ToolCall, ...],
+    ) -> None:
+        super().__init__(*responses)
+        self.tool_calls = iter(tool_calls)
+        self.tool_requests: list[tuple[list[Message], object]] = []
+
+    def complete_tool(self, messages: list[Message], tools: object) -> ToolCall:
+        self.tool_requests.append((list(messages), tools))
+        return next(self.tool_calls)
 
 
 class RecordingWorkspace:
@@ -145,6 +167,12 @@ class CodingAgentTests(unittest.TestCase):
             "Scope list_files to a directory identified by the plan",
             model.calls[1][1].content,
         )
+        self.assertIsNone(model.response_schemas[0])
+        self.assertEqual(
+            model.response_schemas[1]["properties"]["kind"]["type"],
+            "string",
+        )
+        self.assertIsNone(model.response_schemas[2])
 
     def test_invalid_model_action_is_repaired_before_execution(self) -> None:
         progress: list[str] = []
@@ -166,7 +194,60 @@ class CodingAgentTests(unittest.TestCase):
             [ActionKind.READ_FILE, ActionKind.FINISH],
         )
         self.assertIn("previous response was invalid", model.calls[2][1].content)
-        self.assertIn("requesting corrected JSON", "\n".join(progress))
+        self.assertIn("requesting a corrected tool call", "\n".join(progress))
+
+    def test_native_tool_calls_drive_workspace_actions(self) -> None:
+        model = NativeToolModel(
+            responses=(
+                "Inspect parser and finish.",
+                "Reviewed parser.py.",
+            ),
+            tool_calls=(
+                ToolCall("read_file", {"path": "src/parser.py"}),
+                ToolCall("finish", {"message": "Complete."}),
+            ),
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(model=model)
+
+        response = agent.run_workflow("Review parser", workspace)
+
+        self.assertEqual(response, "Reviewed parser.py.")
+        self.assertEqual(
+            [action.kind for action in workspace.actions],
+            [ActionKind.READ_FILE, ActionKind.FINISH],
+        )
+        self.assertEqual(len(model.tool_requests), 2)
+        tool_names = [tool.name for tool in model.tool_requests[0][1]]
+        self.assertIn("read_file", tool_names)
+        self.assertIn("finish", tool_names)
+
+    def test_invalid_native_tool_call_is_repaired(self) -> None:
+        progress: list[str] = []
+        model = NativeToolModel(
+            responses=(
+                "Inspect parser and finish.",
+                "Reviewed parser.py.",
+            ),
+            tool_calls=(
+                ToolCall("inspect_file", {"path": "src/parser.py"}),
+                ToolCall("read_file", {"path": "src/parser.py"}),
+                ToolCall("finish", {"message": "Complete."}),
+            ),
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(model=model, progress_output=progress.append)
+
+        agent.run_workflow("Review parser", workspace)
+
+        self.assertEqual(
+            [action.kind for action in workspace.actions],
+            [ActionKind.READ_FILE, ActionKind.FINISH],
+        )
+        self.assertIn(
+            "requesting a corrected tool call",
+            "\n".join(progress),
+        )
 
     def test_two_invalid_model_actions_fail_without_workspace_execution(self) -> None:
         model = StaticModel(

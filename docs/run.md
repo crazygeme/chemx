@@ -59,7 +59,7 @@ The `--task` argument is only supported with the coding agent.
 - **`--workspace PATH`** – local folder for the task (default: current directory).
 - **`--plan-file PLAN`** – use a pre-written plan instead of auto‑generation.
 - **`--actions-file JSON`** – execute explicit JSON actions (requires `--plan-file`).
-- **`--max-steps N`** – maximum tool actions per task (default: 20).
+- **`--max-steps N`** – maximum tool actions per task (default: 50).
 
 ### Verbosity
 

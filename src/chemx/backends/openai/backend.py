@@ -4,7 +4,14 @@ import os
 from dataclasses import asdict, dataclass
 from typing import Sequence
 
-from ..base import Message, ModelError
+from ..base import (
+    JsonSchema,
+    Message,
+    ModelError,
+    ToolCall,
+    ToolDefinition,
+    parse_tool_arguments,
+)
 from ..http import post_json
 from ..registry import register_backend
 
@@ -19,11 +26,25 @@ class OpenAIBackend:
     timeout: float = 60.0
     context_window_tokens: int = 1_047_576
 
-    def complete(self, messages: Sequence[Message]) -> str:
+    def complete(
+        self,
+        messages: Sequence[Message],
+        *,
+        response_schema: JsonSchema | None = None,
+    ) -> str:
         payload = {
             "model": self.model,
             "messages": [asdict(message) for message in messages],
         }
+        if response_schema is not None:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "chemx_response",
+                    "strict": True,
+                    "schema": response_schema,
+                },
+            }
         data = post_json(
             url=f"{self.base_url.rstrip('/')}/chat/completions",
             payload=payload,
@@ -34,6 +55,36 @@ class OpenAIBackend:
             return str(data["choices"][0]["message"]["content"])
         except (KeyError, IndexError, TypeError) as error:
             raise ModelError("OpenAI returned an unexpected response.") from error
+
+    def complete_tool(
+        self,
+        messages: Sequence[Message],
+        tools: Sequence[ToolDefinition],
+    ) -> ToolCall:
+        """Require one strict, non-parallel function call."""
+        data = post_json(
+            url=f"{self.base_url.rstrip('/')}/chat/completions",
+            payload={
+                "model": self.model,
+                "messages": [asdict(message) for message in messages],
+                "tools": [tool.as_openai_tool(strict=True) for tool in tools],
+                "tool_choice": "required",
+                "parallel_tool_calls": False,
+            },
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=self.timeout,
+        )
+        try:
+            calls = data["choices"][0]["message"]["tool_calls"]
+            if not isinstance(calls, list) or len(calls) != 1:
+                raise ModelError("OpenAI must return exactly one tool call.")
+            function = calls[0]["function"]
+            return ToolCall(
+                name=str(function["name"]),
+                arguments=parse_tool_arguments(function["arguments"]),
+            )
+        except (KeyError, IndexError, TypeError) as error:
+            raise ModelError("OpenAI returned an unexpected tool call.") from error
 
 
 @register_backend("openai", default_model="gpt-4.1-mini")

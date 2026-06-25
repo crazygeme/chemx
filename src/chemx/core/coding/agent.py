@@ -11,10 +11,17 @@ import logging
 from dataclasses import dataclass, field
 from typing import Callable, Sequence
 
-from ...backends import Message, ModelBackend
+from ...backends import JsonSchema, Message, ModelBackend, ModelError
 from ..agent import Agent
-from ..context import fit_messages, truncate_text
-from .action import ActionKind, ActionResult, CodingAction, parse_action
+from ..context import fit_messages
+from .action import (
+    ACTION_RESPONSE_SCHEMA,
+    ACTION_TOOLS,
+    ActionKind,
+    ActionResult,
+    CodingAction,
+    parse_action,
+)
 from .context import build_observation_compaction_prompt
 from .loop import CodingLoop, CodingRun
 from .plan import CodingPlan
@@ -59,7 +66,7 @@ class CodingAgent(Agent):
         task: str,
         workspace: CodingWorkspace,
         *,
-        max_steps: int = 20,
+        max_steps: int = 50,
     ) -> str:
         """Generate a plan, execute bounded actions, and summarize."""
         logger.info("automatic coding workflow started max_steps=%d", max_steps)
@@ -83,7 +90,7 @@ class CodingAgent(Agent):
         plan: str,
         workspace: CodingWorkspace,
         *,
-        max_steps: int = 20,
+        max_steps: int = 50,
     ) -> str:
         """Use an exact user-authored plan while the model selects actions."""
         logger.info("user-plan coding workflow started max_steps=%d", max_steps)
@@ -235,7 +242,12 @@ class CodingAgent(Agent):
         self.loop.set_plan(run, plan)
         return run
 
-    def _complete_step(self, prompt: str) -> str:
+    def _complete_step(
+        self,
+        prompt: str,
+        *,
+        response_schema: JsonSchema | None = None,
+    ) -> str:
         """Execute one model decision without logging prompt contents."""
         logger.debug("requesting model completion prompt_chars=%d", len(prompt))
         assert self.context_policy is not None
@@ -245,7 +257,10 @@ class CodingAgent(Agent):
             current=Message(role="user", content=prompt),
             policy=self.context_policy,
         )
-        response = self.model.complete(messages).strip()
+        response = self.model.complete(
+            messages,
+            response_schema=response_schema,
+        ).strip()
         if not response:
             raise RuntimeError("The model returned an empty response.")
         logger.debug("model completion received response_chars=%d", len(response))
@@ -257,40 +272,56 @@ class CodingAgent(Agent):
         *,
         validator: Callable[[CodingAction], None] | None = None,
     ) -> CodingAction:
-        """Parse one model action, allowing one structured correction attempt."""
-        response = self._complete_step(prompt)
+        """Select one model action, allowing one structured correction attempt."""
         try:
-            action = parse_action(response)
+            action = self._request_action(prompt)
             if validator is not None:
                 validator(action)
             return action
-        except ValueError as first_error:
+        except (ModelError, ValueError) as first_error:
             validation_error = str(first_error)
             logger.warning("invalid model action; requesting correction: %s", first_error)
             self._emit_progress(
-                "The model returned an invalid action; requesting corrected JSON."
+                "The model returned an invalid action; requesting a corrected "
+                "tool call."
             )
 
         repair_prompt = (
             f"{prompt}\n\n"
             "The previous response was invalid and no workspace action ran.\n"
             f"Validation error: {validation_error}\n"
-            "Invalid response:\n"
-            f"{truncate_text(response, 2_000)}\n\n"
-            "Return exactly one corrected JSON action using a supported kind. "
-            "Return JSON only."
+            "Select exactly one corrected workspace tool call."
         )
-        repaired_response = self._complete_step(repair_prompt)
         try:
-            action = parse_action(repaired_response)
+            action = self._request_action(repair_prompt)
             if validator is not None:
                 validator(action)
             return action
-        except ValueError as second_error:
+        except (ModelError, ValueError) as second_error:
             raise ValueError(
                 "Model returned an invalid action twice. "
                 f"Final validation error: {second_error}"
             ) from second_error
+
+    def _request_action(self, prompt: str) -> CodingAction:
+        """Prefer native tool calling, with structured JSON as fallback."""
+        complete_tool = getattr(self.model, "complete_tool", None)
+        if callable(complete_tool):
+            assert self.context_policy is not None
+            messages = fit_messages(
+                system_prompt=self.system_prompt,
+                history=(),
+                current=Message(role="user", content=prompt),
+                policy=self.context_policy,
+            )
+            call = complete_tool(messages, ACTION_TOOLS)
+            return CodingAction.from_tool_call(call)
+
+        response = self._complete_step(
+            prompt,
+            response_schema=ACTION_RESPONSE_SCHEMA,
+        )
+        return parse_action(response)
 
     def _compact_observations_if_needed(self, run: CodingRun) -> None:
         """Summarize older tool results once the raw observation limit is reached."""

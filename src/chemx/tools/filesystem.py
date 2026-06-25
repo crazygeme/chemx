@@ -75,6 +75,24 @@ class ListTool:
         logger.debug("listed workspace files count=%d limit=%d", len(files), max_files)
         return files[:max_files]
 
+    def iter_files(self, relative_path: str | None = None) -> list[Path]:
+        """Return sorted, non-ignored files beneath an optional directory."""
+        base = (
+            self.paths.root
+            if relative_path is None
+            else self.paths.resolve(relative_path)
+        )
+        if not base.is_dir():
+            raise ValueError(f"Directory does not exist: {relative_path}")
+
+        rules = self._load_ignore_rules()
+        paths = [
+            self.paths.root / relative
+            for relative in self._walk_files(base, rules)
+        ]
+        paths.sort(key=lambda path: path.relative_to(self.paths.root).as_posix())
+        return paths
+
     def _walk_files(
         self,
         base: Path,

@@ -1,6 +1,13 @@
 """Built-in model backends and backend registry."""
 
-from .base import Message, ModelBackend, ModelError
+from .base import (
+    JsonSchema,
+    Message,
+    ModelBackend,
+    ModelError,
+    ToolCall,
+    ToolDefinition,
+)
 from .lifecycle import prepare_backend
 from .registry import (
     available_backends,
@@ -17,10 +24,13 @@ from .openai import OpenAIBackend
 __all__ = [
     "Message",
     "DeepSeekBackend",
+    "JsonSchema",
     "ModelBackend",
     "ModelError",
     "OllamaBackend",
     "OpenAIBackend",
+    "ToolCall",
+    "ToolDefinition",
     "available_backends",
     "create_backend",
     "get_backend_registration",

@@ -12,7 +12,12 @@ from chemx.frontends.cli.app import _approve_command, _CodingOutput
 class StaticModel:
     context_window_tokens = 32_768
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_schema: object = None,
+    ) -> str:
         return "response"
 
 

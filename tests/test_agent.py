@@ -16,7 +16,12 @@ class RecordingModel:
         self.responses = iter(responses)
         self.calls: list[list[Message]] = []
 
-    def complete(self, messages: list[Message]) -> str:
+    def complete(
+        self,
+        messages: list[Message],
+        *,
+        response_schema: object = None,
+    ) -> str:
         self.calls.append(list(messages))
         return next(self.responses)
 
@@ -46,7 +51,12 @@ class AgentTests(unittest.TestCase):
 
     def test_backend_without_context_metadata_is_rejected(self) -> None:
         class IncompleteBackend:
-            def complete(self, messages: list[Message]) -> str:
+            def complete(
+                self,
+                messages: list[Message],
+                *,
+                response_schema: object = None,
+            ) -> str:
                 return "response"
 
         with self.assertRaisesRegex(ValueError, "context_window_tokens"):
