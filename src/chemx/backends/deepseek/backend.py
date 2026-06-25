@@ -17,6 +17,7 @@ class DeepSeekBackend:
     api_key: str
     base_url: str = "https://api.deepseek.com"
     timeout: float = 60.0
+    context_window_tokens: int = 128_000
 
     def complete(self, messages: Sequence[Message]) -> str:
         """Generate one non-streaming DeepSeek chat response."""

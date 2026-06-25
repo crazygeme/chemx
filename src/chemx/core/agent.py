@@ -9,6 +9,7 @@ import logging
 from dataclasses import dataclass, field
 
 from ..backends import Message, ModelBackend
+from .context import ContextPolicy, fit_messages
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +24,11 @@ class Agent:
     model: ModelBackend
     system_prompt: str = DEFAULT_SYSTEM_PROMPT
     history: list[Message] = field(default_factory=list)
+    context_policy: ContextPolicy | None = None
+
+    def __post_init__(self) -> None:
+        if self.context_policy is None:
+            self.context_policy = ContextPolicy.from_backend(self.model)
 
     def run(self, user_input: str) -> str:
         """Run one agent turn and return the assistant response."""
@@ -31,11 +37,13 @@ class Agent:
             raise ValueError("User input cannot be empty.")
 
         user_message = Message(role="user", content=text)
-        messages = [
-            Message(role="system", content=self.system_prompt),
-            *self.history,
-            user_message,
-        ]
+        assert self.context_policy is not None
+        messages = fit_messages(
+            system_prompt=self.system_prompt,
+            history=self.history,
+            current=user_message,
+            policy=self.context_policy,
+        )
 
         logger.debug(
             "conversation model turn started history_messages=%d",

@@ -10,11 +10,14 @@ from chemx.core.coding import (
     CodingAgent,
     CodingSession,
     CodingPhase,
+    ContextPolicy,
     PlanSource,
 )
 
 
 class StaticModel:
+    context_window_tokens = 32_768
+
     def __init__(self, *responses: str) -> None:
         self.responses = iter(responses)
         self.calls: list[list[Message]] = []
@@ -288,6 +291,35 @@ class CodingAgentTests(unittest.TestCase):
 
         self.assertEqual(response, "Coding workflow reached the 2-step limit.")
         self.assertEqual(agent.current_run.phase, CodingPhase.FAILED)
+
+    def test_action_prompt_compacts_older_and_oversized_observations(self) -> None:
+        class LargeWorkspace(RecordingWorkspace):
+            def execute(self, action: CodingAction) -> ActionResult:
+                self.actions.append(action)
+                return ActionResult(action, True, "begin-" + ("x" * 200) + "-end")
+
+        model = StaticModel(
+            "Inspect files.",
+            action_response("list_files"),
+            action_response("list_files"),
+            action_response("list_files"),
+        )
+        agent = CodingAgent(
+            model=model,
+            context_policy=ContextPolicy(
+                max_observations=1,
+                max_observation_chars=60,
+                max_observation_chars_total=100,
+            ),
+        )
+
+        agent.run_workflow("Inspect repository", LargeWorkspace(), max_steps=3)
+
+        third_action_prompt = model.calls[3][1].content
+        self.assertIn("1 earlier observation(s) omitted", third_action_prompt)
+        self.assertIn("begin-", third_action_prompt)
+        self.assertIn("-end", third_action_prompt)
+        self.assertIn("content truncated", third_action_prompt)
 
 
 if __name__ == "__main__":

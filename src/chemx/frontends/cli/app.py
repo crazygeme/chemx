@@ -72,6 +72,8 @@ class _CodingOutput:
 class _NoModelBackend:
     """Sentinel backend for strict user-plan execution."""
 
+    context_window_tokens = 32_768
+
     def complete(self, messages: Sequence[object]) -> str:
         raise RuntimeError("Strict user-plan mode does not permit model calls.")
 

@@ -1,10 +1,17 @@
 import unittest
 
 from chemx.backends import Message
-from chemx.core import Agent
+from chemx.core import (
+    Agent,
+    ContextPolicy,
+    calculate_reserved_output_tokens,
+    truncate_text,
+)
 
 
 class RecordingModel:
+    context_window_tokens = 32_768
+
     def __init__(self, responses: list[str]) -> None:
         self.responses = iter(responses)
         self.calls: list[list[Message]] = []
@@ -28,6 +35,28 @@ class AgentTests(unittest.TestCase):
         self.assertEqual(second_call[2], Message("assistant", "Hello."))
         self.assertEqual(second_call[3], Message("user", "Are you there?"))
 
+    def test_context_policy_is_derived_from_backend(self) -> None:
+        model = RecordingModel(["Hello."])
+        model.context_window_tokens = 64_000
+
+        agent = Agent(model=model)
+
+        self.assertEqual(agent.context_policy.context_window_tokens, 64_000)
+        self.assertEqual(agent.context_policy.reserved_output_tokens, 8_000)
+
+    def test_backend_without_context_metadata_is_rejected(self) -> None:
+        class IncompleteBackend:
+            def complete(self, messages: list[Message]) -> str:
+                return "response"
+
+        with self.assertRaisesRegex(ValueError, "context_window_tokens"):
+            Agent(model=IncompleteBackend())
+
+    def test_output_reserve_is_bounded(self) -> None:
+        self.assertEqual(calculate_reserved_output_tokens(4_096), 512)
+        self.assertEqual(calculate_reserved_output_tokens(64_000), 8_000)
+        self.assertEqual(calculate_reserved_output_tokens(1_000_000), 16_384)
+
     def test_clear_removes_history(self) -> None:
         model = RecordingModel(["Hello."])
         agent = Agent(model=model)
@@ -42,6 +71,65 @@ class AgentTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "cannot be empty"):
             agent.run("  ")
+
+    def test_context_policy_retains_recent_complete_turns(self) -> None:
+        model = RecordingModel(["one", "two", "three"])
+        agent = Agent(
+            model=model,
+            system_prompt="system",
+            context_policy=ContextPolicy(
+                context_window_tokens=60,
+                reserved_output_tokens=10,
+                recent_turns=1,
+            ),
+        )
+
+        agent.run("first")
+        agent.run("second")
+        agent.run("third")
+
+        third_call = model.calls[2]
+        self.assertEqual(third_call[0], Message("system", "system"))
+        self.assertIn("earlier conversation message(s) omitted", third_call[1].content)
+        self.assertEqual(third_call[2], Message("user", "second"))
+        self.assertEqual(third_call[3], Message("assistant", "two"))
+        self.assertEqual(third_call[4], Message("user", "third"))
+
+    def test_oversized_current_input_is_truncated_to_budget(self) -> None:
+        model = RecordingModel(["ok"])
+        policy = ContextPolicy(
+            context_window_tokens=30,
+            reserved_output_tokens=5,
+        )
+        agent = Agent(model=model, system_prompt="brief", context_policy=policy)
+
+        agent.run("x" * 200)
+
+        total_chars = sum(len(message.content) for message in model.calls[0])
+        self.assertLessEqual(total_chars, policy.input_character_budget)
+        self.assertIn("content truncated", model.calls[0][-1].content)
+
+    def test_zero_recent_turns_omits_all_history(self) -> None:
+        model = RecordingModel(["one", "two"])
+        agent = Agent(
+            model=model,
+            context_policy=ContextPolicy(recent_turns=0),
+        )
+
+        agent.run("first")
+        agent.run("second")
+
+        second_call = model.calls[1]
+        self.assertIn("2 earlier conversation message(s) omitted", second_call[1].content)
+        self.assertEqual(second_call[-1], Message("user", "second"))
+        self.assertNotIn(Message("user", "first"), second_call)
+
+    def test_truncate_text_preserves_both_ends(self) -> None:
+        truncated = truncate_text("start-" + ("x" * 100) + "-end", 50)
+
+        self.assertEqual(len(truncated), 50)
+        self.assertTrue(truncated.startswith("start-"))
+        self.assertTrue(truncated.endswith("-end"))
 
 
 if __name__ == "__main__":

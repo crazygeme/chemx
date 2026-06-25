@@ -1,6 +1,13 @@
 """Core agent behavior."""
 
 from .agent import Agent, DEFAULT_SYSTEM_PROMPT
+from .context import (
+    ContextPolicy,
+    calculate_reserved_output_tokens,
+    estimate_message_tokens,
+    fit_messages,
+    truncate_text,
+)
 from .chemicals import (
     CHEMICALS_SYSTEM_PROMPT,
     ChemicalsAgent,
@@ -45,10 +52,15 @@ __all__ = [
     "CodingRun",
     "CodingSession",
     "CodingWorkspace",
+    "ContextPolicy",
     "DEFAULT_SYSTEM_PROMPT",
     "LocalWorkspace",
     "PlanSource",
     "ProgressOutput",
     "create_coding_session",
+    "calculate_reserved_output_tokens",
+    "estimate_message_tokens",
+    "fit_messages",
     "parse_action",
+    "truncate_text",
 ]

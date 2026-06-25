@@ -4,7 +4,9 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import Sequence
 
+from ..context import ContextPolicy, truncate_text
 from .action import ActionResult
+from .context import format_observations
 
 
 class PlanSource(str, Enum):
@@ -54,13 +56,11 @@ def build_action_prompt(
     task: str,
     plan: CodingPlan,
     observations: Sequence[ActionResult],
+    context_policy: ContextPolicy | None = None,
 ) -> str:
     """Ask the model to select exactly one structured workspace action."""
-    observation_text = "\n\n".join(
-        f"{result.action.kind.value} ({'ok' if result.success else 'failed'}):\n"
-        f"{result.output}"
-        for result in observations
-    ) or "No actions have run yet."
+    policy = context_policy or ContextPolicy()
+    observation_text = format_observations(observations, policy)
     return (
         "Choose exactly one next coding action as a JSON object.\n"
         f"Task:\n{task}\n\n"
@@ -92,12 +92,19 @@ def build_summary_prompt(
     plan: CodingPlan,
     observations: Sequence[ActionResult],
     diff: str,
+    context_policy: ContextPolicy | None = None,
 ) -> str:
     """Ask for a factual summary based on actual tool results."""
-    results = "\n\n".join(result.output for result in observations)
+    policy = context_policy or ContextPolicy()
+    results = format_observations(observations, policy)
+    bounded_diff = (
+        truncate_text(diff, policy.max_diff_chars)
+        if diff
+        else "(no changes)"
+    )
     return (
         "Summarize the completed coding task using only these tool results.\n"
         f"Task:\n{task}\n\nPlan:\n{plan.text}\n\n"
         f"Tool results:\n{results}\n\n"
-        f"Final diff:\n{diff or '(no changes)'}"
+        f"Final diff:\n{bounded_diff}"
     )

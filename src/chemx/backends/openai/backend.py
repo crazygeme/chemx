@@ -17,6 +17,7 @@ class OpenAIBackend:
     api_key: str
     base_url: str = "https://api.openai.com/v1"
     timeout: float = 60.0
+    context_window_tokens: int = 1_047_576
 
     def complete(self, messages: Sequence[Message]) -> str:
         payload = {

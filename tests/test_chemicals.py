@@ -5,6 +5,8 @@ from chemx.core.chemicals import ChemicalsAgent, ChemicalsLoop, ChemicalsPhase
 
 
 class StaticModel:
+    context_window_tokens = 32_768
+
     def __init__(self, response: str) -> None:
         self.response = response
         self.calls: list[list[Message]] = []

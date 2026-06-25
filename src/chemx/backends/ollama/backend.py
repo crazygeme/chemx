@@ -16,6 +16,7 @@ class OllamaBackend:
     model: str
     base_url: str = "http://localhost:11434"
     timeout: float = 60.0
+    context_window_tokens: int = 131_072
 
     def prepare(self) -> None:
         """Start an installed local Ollama service when it is not running."""

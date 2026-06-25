@@ -159,6 +159,32 @@ During an interactive session:
 - Enter `/clear` to discard conversation history.
 - Enter `/exit` or press `Ctrl-D` to stop.
 
+## Context management
+
+Every model request is bounded by an approximate token budget obtained from
+the selected model backend. The system prompt and current request are retained,
+followed by the newest complete conversation turns that fit. Oversized coding
+observations and final diffs retain their beginning and end, while older
+observations are omitted.
+
+The response reserve is calculated as one eighth of the model context window,
+with lower and upper bounds for unusually small or large windows. The token
+estimate is dependency-free and assumes approximately four characters per
+token. Library users can still override the derived policy when needed:
+
+```python
+from chemx.core import Agent, ContextPolicy
+
+agent = Agent(
+    model=backend,
+    context_policy=ContextPolicy(
+        context_window_tokens=64_000,
+        reserved_output_tokens=8_000,
+        recent_turns=10,
+    ),
+)
+```
+
 ## Coding workspace workflow
 
 Run a typical coding-agent cycle against a local folder:

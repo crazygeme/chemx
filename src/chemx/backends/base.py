@@ -15,6 +15,8 @@ class Message:
 class ModelBackend(Protocol):
     """Interface implemented by every model provider."""
 
+    context_window_tokens: int
+
     def complete(self, messages: Sequence[Message]) -> str:
         """Generate a response for a conversation."""
         return ""

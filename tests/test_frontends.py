@@ -10,6 +10,8 @@ from chemx.frontends.cli.app import _approve_command, _CodingOutput
 
 
 class StaticModel:
+    context_window_tokens = 32_768
+
     def complete(self, messages: list[Message]) -> str:
         return "response"
 
@@ -40,6 +42,17 @@ class CliFrontendTests(unittest.TestCase):
         args = build_parser().parse_args(["-vv"])
 
         self.assertEqual(args.verbose, 2)
+
+    def test_cli_has_no_manual_context_flags(self) -> None:
+        option_strings = {
+            option
+            for action in build_parser()._actions
+            for option in action.option_strings
+        }
+
+        self.assertNotIn("--context-window", option_strings)
+        self.assertNotIn("--reserve-output", option_strings)
+        self.assertNotIn("--recent-turns", option_strings)
 
     def test_cli_creates_selected_agent(self) -> None:
         model = StaticModel()

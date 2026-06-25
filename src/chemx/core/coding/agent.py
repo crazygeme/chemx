@@ -13,6 +13,7 @@ from typing import Callable, Sequence
 
 from ...backends import Message, ModelBackend
 from ..agent import Agent
+from ..context import fit_messages
 from .action import ActionKind, ActionResult, CodingAction, parse_action
 from .loop import CodingLoop, CodingRun
 from .plan import (
@@ -155,6 +156,7 @@ class CodingAgent(Agent):
     ) -> str:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1.")
+        assert self.context_policy is not None
         run = self._initialize_run(task, plan, workspace)
 
         for _ in range(max_steps):
@@ -164,6 +166,7 @@ class CodingAgent(Agent):
                     task=run.task,
                     plan=plan,
                     observations=run.results,
+                    context_policy=self.context_policy,
                 )
             )
             action = parse_action(action_response)
@@ -193,6 +196,7 @@ class CodingAgent(Agent):
                         plan=plan,
                         observations=run.results,
                         diff=workspace.changes(),
+                        context_policy=self.context_policy,
                     )
                 )
                 self.loop.complete(run, response)
@@ -220,12 +224,14 @@ class CodingAgent(Agent):
     def _complete_step(self, prompt: str) -> str:
         """Execute one model decision without logging prompt contents."""
         logger.debug("requesting model completion prompt_chars=%d", len(prompt))
-        response = self.model.complete(
-            [
-                Message(role="system", content=self.system_prompt),
-                Message(role="user", content=prompt),
-            ]
-        ).strip()
+        assert self.context_policy is not None
+        messages = fit_messages(
+            system_prompt=self.system_prompt,
+            history=(),
+            current=Message(role="user", content=prompt),
+            policy=self.context_policy,
+        )
+        response = self.model.complete(messages).strip()
         if not response:
             raise RuntimeError("The model returned an empty response.")
         logger.debug("model completion received response_chars=%d", len(response))

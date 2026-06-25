@@ -1,5 +1,6 @@
 """Coding-specific agent behavior and run-loop state."""
 
+from ..context import ContextPolicy
 from .action import ActionKind, ActionResult, CodingAction, parse_action
 from .agent import CODING_SYSTEM_PROMPT, CodingAgent, ProgressOutput
 from .local_workspace import LocalWorkspace
@@ -20,6 +21,7 @@ __all__ = [
     "CodingRun",
     "CodingSession",
     "CodingWorkspace",
+    "ContextPolicy",
     "LocalWorkspace",
     "PlanSource",
     "ProgressOutput",

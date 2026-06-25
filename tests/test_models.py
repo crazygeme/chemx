@@ -25,6 +25,7 @@ class ModelFactoryTests(unittest.TestCase):
 
         self.assertIsInstance(backend, OllamaBackend)
         self.assertEqual(backend.model, "llama3.2")
+        self.assertEqual(backend.context_window_tokens, 131_072)
 
     def test_creates_remote_backend_from_environment(self) -> None:
         with patch.dict(os.environ, {"OPENAI_API_KEY": "secret"}):
@@ -32,6 +33,7 @@ class ModelFactoryTests(unittest.TestCase):
 
         self.assertIsInstance(backend, OpenAIBackend)
         self.assertEqual(backend.api_key, "secret")
+        self.assertEqual(backend.context_window_tokens, 1_047_576)
 
     def test_remote_backend_requires_api_key(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
@@ -45,6 +47,7 @@ class ModelFactoryTests(unittest.TestCase):
         self.assertIsInstance(backend, DeepSeekBackend)
         self.assertEqual(backend.api_key, "deepseek-secret")
         self.assertEqual(backend.base_url, "https://api.deepseek.com")
+        self.assertEqual(backend.context_window_tokens, 128_000)
 
     def test_deepseek_registration_uses_current_default_model(self) -> None:
         registration = get_backend_registration("deepseek")
@@ -85,6 +88,8 @@ class ModelFactoryTests(unittest.TestCase):
 
     def test_registration_adds_backend_without_factory_branching(self) -> None:
         class ExampleBackend:
+            context_window_tokens = 8_192
+
             def complete(self, messages: object) -> str:
                 return "example"
 
