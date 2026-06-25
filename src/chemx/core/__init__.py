@@ -18,9 +18,11 @@ from .coding import (
     CodingPlan,
     CodingPhase,
     CodingRun,
+    CodingSession,
     CodingWorkspace,
     LocalWorkspace,
     PlanSource,
+    create_coding_session,
     parse_action,
 )
 
@@ -40,9 +42,11 @@ __all__ = [
     "CodingPlan",
     "CodingPhase",
     "CodingRun",
+    "CodingSession",
     "CodingWorkspace",
     "DEFAULT_SYSTEM_PROMPT",
     "LocalWorkspace",
     "PlanSource",
+    "create_coding_session",
     "parse_action",
 ]

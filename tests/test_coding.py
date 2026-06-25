@@ -1,4 +1,5 @@
 import json
+import logging
 import unittest
 
 from chemx.backends import Message
@@ -7,6 +8,7 @@ from chemx.core.coding import (
     ActionResult,
     CodingAction,
     CodingAgent,
+    CodingSession,
     CodingPhase,
     PlanSource,
 )
@@ -48,6 +50,62 @@ def action_response(kind: str, **values: object) -> str:
 
 
 class CodingAgentTests(unittest.TestCase):
+    def test_debug_logging_describes_plan_and_actions(self) -> None:
+        model = StaticModel(
+            "1. Read parser.py.\n2. Finish.",
+            action_response("read_file", path="src/parser.py"),
+            action_response("finish", message="Review complete."),
+            "Reviewed parser.py.",
+        )
+        agent = CodingAgent(model=model)
+
+        with self.assertLogs(
+            "chemx.core.coding.agent",
+            level=logging.DEBUG,
+        ) as logs:
+            agent.run_workflow("Review parser", RecordingWorkspace())
+
+        output = "\n".join(logs.output)
+        self.assertIn("model-generated coding plan", output)
+        self.assertIn("1. Read parser.py.", output)
+        self.assertIn("model-selected coding step=1", output)
+        self.assertIn('"kind": "read_file"', output)
+        self.assertIn("workspace action to execute step=1", output)
+        self.assertIn("path: src/parser.py", output)
+
+    def test_action_prompt_explains_direct_command_approval(self) -> None:
+        model = StaticModel(
+            "Inspect files.",
+            action_response("finish", message="No changes needed."),
+            "No changes were required.",
+        )
+        agent = CodingAgent(model=model)
+
+        agent.run_workflow("Review parser", RecordingWorkspace())
+
+        self.assertIn(
+            "commands run directly without Bash and require user approval",
+            model.calls[1][1].content,
+        )
+
+    def test_coding_session_runs_workspace_backed_interactive_turn(self) -> None:
+        model = StaticModel(
+            "Inspect files.",
+            action_response("finish", message="No changes needed."),
+            "No changes were required.",
+        )
+        workspace = RecordingWorkspace()
+        session = CodingSession(
+            agent=CodingAgent(model=model),
+            workspace=workspace,
+            max_steps=7,
+        )
+
+        response = session.run("Review parser")
+
+        self.assertEqual(response, "No changes were required.")
+        self.assertEqual(workspace.actions[0].kind, ActionKind.FINISH)
+
     def test_model_plan_is_natural_language_then_actions_are_structured(self) -> None:
         model = StaticModel(
             "1. Read parser.py.\n2. Add validation.\n3. Run parser tests.",

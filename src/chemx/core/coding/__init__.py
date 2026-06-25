@@ -5,6 +5,7 @@ from .agent import CODING_SYSTEM_PROMPT, CodingAgent
 from .local_workspace import LocalWorkspace
 from .loop import CodingLoop, CodingPhase, CodingRun
 from .plan import CodingPlan, PlanSource
+from .session import CodingSession, create_coding_session
 from .workspace import CodingWorkspace
 
 __all__ = [
@@ -17,8 +18,10 @@ __all__ = [
     "CodingPlan",
     "CodingPhase",
     "CodingRun",
+    "CodingSession",
     "CodingWorkspace",
     "LocalWorkspace",
     "PlanSource",
+    "create_coding_session",
     "parse_action",
 ]

@@ -79,8 +79,10 @@ def build_action_prompt(
         '{"kind":"finish","message":"work and verification are complete"}\n'
         "Return JSON only. Read relevant files before editing. Use exact text "
         "replacement for narrow edits and write_file only when full replacement "
-        "is justified. Run verification before finishing. Bash is unavailable "
-        "unless the workspace explicitly enables it."
+        "is justified. Use run_command with an argument array for compilation or "
+        "verification; commands run directly without Bash and require user "
+        "approval before execution. Bash is unavailable unless the workspace "
+        "explicitly enables it."
     )
 
 

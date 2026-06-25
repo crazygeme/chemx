@@ -1,9 +1,10 @@
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from chemx.backends import Message
 from chemx.core import ChemicalsAgent, CodingAgent
 from chemx.frontends.cli import build_parser, create_agent, main
+from chemx.frontends.cli.app import _approve_command
 
 
 class StaticModel:
@@ -55,6 +56,77 @@ class CliFrontendTests(unittest.TestCase):
         )
 
         self.assertEqual(agent.system_prompt, "Custom industry prompt")
+
+    @patch("builtins.input", side_effect=["Write notes.txt", "/exit"])
+    @patch("chemx.frontends.cli.app.create_coding_session")
+    @patch("chemx.frontends.cli.app._create_local_workspace")
+    @patch("chemx.frontends.cli.app.prepare_backend")
+    @patch("chemx.frontends.cli.app.create_backend", return_value=StaticModel())
+    def test_interactive_coding_turn_uses_workspace_workflow(
+        self,
+        create_backend: Mock,
+        prepare_backend: Mock,
+        create_workspace: Mock,
+        create_session: Mock,
+        input_mock: Mock,
+    ) -> None:
+        workspace = create_workspace.return_value
+        session = create_session.return_value
+        session.run.return_value = "Wrote notes.txt."
+
+        result = main(
+            [
+                "--provider",
+                "deepseek",
+                "--workspace",
+                "project",
+                "--max-steps",
+                "7",
+            ]
+        )
+
+        self.assertEqual(result, 0)
+        create_backend.assert_called_once()
+        prepare_backend.assert_called_once()
+        create_workspace.assert_called_once()
+        create_session.assert_called_once_with(
+            ANY,
+            workspace,
+            max_steps=7,
+        )
+        session.run.assert_called_once_with("Write notes.txt")
+        self.assertEqual(input_mock.call_count, 2)
+
+    @patch("builtins.input", return_value="yes")
+    def test_command_approval_accepts_yes(self, input_mock: Mock) -> None:
+        approved = _approve_command(("gcc", "-o", "hello", "hello.c"))
+
+        self.assertTrue(approved)
+        input_mock.assert_called_once_with(
+            "chemx> Allow command `gcc -o hello hello.c`? [y/N] "
+        )
+
+    @patch("builtins.input", return_value="")
+    def test_command_approval_defaults_to_denied(self, input_mock: Mock) -> None:
+        self.assertFalse(_approve_command(("make",)))
+        input_mock.assert_called_once()
+
+    @patch("builtins.input", side_effect=["Explain the sample", "/exit"])
+    @patch("chemx.frontends.cli.app._create_local_workspace")
+    @patch("chemx.frontends.cli.app.prepare_backend")
+    @patch("chemx.frontends.cli.app.create_backend", return_value=StaticModel())
+    def test_interactive_chemicals_turn_remains_conversational(
+        self,
+        create_backend: Mock,
+        prepare_backend: Mock,
+        create_workspace: Mock,
+        input_mock: Mock,
+    ) -> None:
+        result = main(["--agent", "chemicals"])
+
+        self.assertEqual(result, 0)
+        create_workspace.assert_not_called()
+        self.assertEqual(input_mock.call_count, 2)
 
     @patch("chemx.frontends.cli.app.CodingAgent.run_actions", return_value="done")
     @patch(

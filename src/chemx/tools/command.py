@@ -3,30 +3,29 @@
 import logging
 import subprocess
 from dataclasses import dataclass
-from typing import Sequence
+from typing import Callable, Sequence
 
 from .filesystem import WorkspacePaths
 
 logger = logging.getLogger(__name__)
 
+CommandApproval = Callable[[tuple[str, ...]], bool]
+
 
 @dataclass
 class CommandTool:
-    """Execute exact argument vectors approved by workspace policy."""
+    """Execute argument vectors after explicit approval."""
     paths: WorkspacePaths
-    allowed_commands: tuple[tuple[str, ...], ...] = ()
+    approval: CommandApproval | None = None
     timeout: float = 120.0
     max_chars: int = 20_000
 
     def run(self, command: Sequence[str]) -> str:
         normalized = tuple(command)
-        if normalized not in self.allowed_commands:
-            raise ValueError(
-                "Command is not allowlisted for this workspace: "
-                f"{' '.join(normalized)}"
-            )
+        if self.approval is None or not self.approval(normalized):
+            raise ValueError(f"Command was not approved: {' '.join(normalized)}")
         logger.info(
-            "running allowlisted command executable=%s argc=%d",
+            "running approved command executable=%s argc=%d",
             normalized[0],
             len(normalized),
         )

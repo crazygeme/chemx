@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
+from typing import Protocol
 
 from ...backends import (
     ModelBackend,
@@ -27,10 +28,21 @@ from ...core import (
     ChemicalsAgent,
     CodingAgent,
     LocalWorkspace,
+    create_coding_session,
 )
 from ...core.observability import configure_logging
 
 AgentFactory = Callable[..., Agent]
+
+
+class InteractiveSession(Protocol):
+    """Common interface used by the terminal interaction loop."""
+
+    def run(self, user_input: str) -> str:
+        """Run one interactive turn."""
+
+    def clear(self) -> None:
+        """Clear retained session state."""
 
 
 class _NoModelBackend:
@@ -98,7 +110,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--workspace",
         default=".",
-        help="local folder used with --task (default: current directory)",
+        help="local folder used by coding workflows (default: current directory)",
     )
     parser.add_argument(
         "--plan-file",
@@ -109,15 +121,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="execute explicit JSON actions without using a model",
     )
     parser.add_argument(
-        "--verify-command",
-        default="python3 -m unittest discover -s tests -v",
-        help="verification command used with --task",
-    )
-    parser.add_argument(
         "--max-steps",
         type=int,
         default=20,
-        help="maximum model-selected tool actions (default: 20)",
+        help="maximum model-selected tool actions per coding task (default: 20)",
     )
     parser.add_argument(
         "-v",
@@ -210,7 +217,6 @@ def main(argv: Sequence[str] | None = None) -> int:
             raise RuntimeError("Coding profile did not create a CodingAgent.")
         try:
             workspace = _create_local_workspace(args)
-            verification_command = tuple(shlex.split(args.verify_command))
             if args.plan_file:
                 plan = Path(args.plan_file).read_text(encoding="utf-8")
                 response = agent.run_plan(
@@ -218,20 +224,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                     plan,
                     workspace,
                     max_steps=args.max_steps,
-                    verification_command=verification_command,
                 )
             else:
                 response = agent.run_workflow(
                     args.task,
                     workspace,
                     max_steps=args.max_steps,
-                    verification_command=verification_command,
                 )
         except (OSError, RuntimeError, ValueError) as error:
             print(f"Workspace error: {error}", file=sys.stderr)
             return 2
         print(f"chemx> {response}")
         return 0
+
+    session: InteractiveSession = agent
+    if isinstance(agent, CodingAgent):
+        try:
+            workspace = _create_local_workspace(args)
+            session = create_coding_session(
+                agent,
+                workspace,
+                max_steps=args.max_steps,
+            )
+        except (OSError, RuntimeError, ValueError) as error:
+            print(f"Workspace error: {error}", file=sys.stderr)
+            return 2
 
     print("Commands: /clear, /exit")
 
@@ -246,14 +263,14 @@ def main(argv: Sequence[str] | None = None) -> int:
         if command in {"/exit", "/quit"}:
             return 0
         if command == "/clear":
-            agent.clear()
+            session.clear()
             print("chemx> Conversation cleared.")
             continue
         if not command:
             continue
 
         try:
-            response = agent.run(user_input)
+            response = session.run(user_input)
         except (ModelError, RuntimeError, ValueError) as error:
             print(f"error: {error}", file=sys.stderr)
             continue
@@ -262,11 +279,23 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _create_local_workspace(args: argparse.Namespace) -> LocalWorkspace:
-    verification_command = tuple(shlex.split(args.verify_command))
+    root = Path(args.workspace).expanduser().resolve()
     return LocalWorkspace(
-        root=Path(args.workspace),
-        allowed_commands=(verification_command,),
+        root=root,
+        command_approval=_approve_command,
     )
+
+
+def _approve_command(command: tuple[str, ...]) -> bool:
+    """Ask for explicit permission before running a workspace command."""
+    try:
+        answer = input(
+            f"chemx> Allow command `{shlex.join(command)}`? [y/N] "
+        )
+    except (EOFError, KeyboardInterrupt):
+        print()
+        return False
+    return answer.strip().lower() in {"y", "yes"}
 
 
 def _read_actions(path: Path) -> list[CodingAction]:

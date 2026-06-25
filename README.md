@@ -124,7 +124,7 @@ chemx [--agent {coding,chemicals}]
       [--base-url URL]
       [--system-prompt TEXT] [--timeout SECONDS]
       [--task TEXT] [--workspace PATH] [--plan-file PLAN]
-      [--actions-file JSON] [--verify-command COMMAND] [--max-steps N]
+      [--actions-file JSON] [--max-steps N]
       [-v | -vv]
 ```
 
@@ -144,11 +144,18 @@ chemx -vv --task "Fix the parser"
 ```
 
 Logs are written to standard error; normal agent output remains on standard
-output.
+output. At `-vv`, coding workflows also log the generated plan, each
+model-selected step, and the parsed workspace action before execution. File
+content included in actions is visible and should be treated as sensitive
+diagnostic output. Backend request and response bodies are not logged.
 
 During an interactive session:
 
-- Enter a message to run one agent turn.
+- With the coding agent, enter a task to run the complete workspace workflow.
+  The agent may inspect, create, or edit files beneath `--workspace`.
+  Proposed commands are displayed and require explicit approval before they
+  run.
+- With the chemicals agent, enter a message to run one conversational turn.
 - Enter `/clear` to discard conversation history.
 - Enter `/exit` or press `Ctrl-D` to stop.
 
@@ -166,22 +173,11 @@ chemx --agent coding \
 The agent inspects the folder, automatically creates a prose plan, then
 selects structured actions one at a time. File edits use exact-text replacement
 or explicit file creation. Commands are passed as argument arrays rather than
-through a shell. The local workspace rejects commands that were not explicitly
-allowlisted; the CLI allowlists only `--verify-command`. The final Git diff is
-shown to the model only for reporting when Git is available. Non-Git folders
-are supported and receive a filesystem change summary.
-
-The default verification command is:
-
-```sh
-python3 -m unittest discover -s tests -v
-```
-
-It can be replaced:
-
-```sh
-chemx --task "Fix the parser" --verify-command "python3 -m pytest -q"
-```
+through a shell. Before execution, the CLI prints the exact command and asks
+for approval. A denied command is returned to the model as a failed workspace
+observation. The final Git diff is shown to the model only for reporting when
+Git is available. Non-Git folders are supported and receive a filesystem
+change summary.
 
 To supply the plan while retaining model-selected actions:
 

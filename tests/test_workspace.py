@@ -13,14 +13,15 @@ class LocalWorkspaceTests(unittest.TestCase):
         subprocess.run(["git", "init", "-q"], cwd=self.root, check=True)
         (self.root / "example.py").write_text("value = 1\n", encoding="utf-8")
         subprocess.run(["git", "add", "example.py"], cwd=self.root, check=True)
-        self.verification_command = (
+        self.command = (
             "python3",
             "-c",
             "from example import value; assert value == 2",
         )
+        self.approvals: list[tuple[str, ...]] = []
         self.workspace = LocalWorkspace(
             self.root,
-            allowed_commands=(self.verification_command,),
+            command_approval=self._approve,
         )
 
     def tearDown(self) -> None:
@@ -41,7 +42,7 @@ class LocalWorkspaceTests(unittest.TestCase):
         command = self.workspace.execute(
             CodingAction(
                 ActionKind.RUN_COMMAND,
-                command=self.verification_command,
+                command=self.command,
             )
         )
 
@@ -49,6 +50,7 @@ class LocalWorkspaceTests(unittest.TestCase):
         self.assertEqual(read.output, "value = 1\n")
         self.assertTrue(replace.success)
         self.assertTrue(command.success)
+        self.assertEqual(self.approvals, [self.command])
         self.assertIn("+value = 2", self.workspace.changes())
 
     def test_replace_requires_one_exact_match(self) -> None:
@@ -84,8 +86,12 @@ class LocalWorkspaceTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("Refusing to overwrite", result.output)
 
-    def test_command_requires_allowlist(self) -> None:
-        result = self.workspace.execute(
+    def test_command_requires_approval(self) -> None:
+        workspace = LocalWorkspace(
+            self.root,
+            command_approval=lambda command: False,
+        )
+        result = workspace.execute(
             CodingAction(
                 ActionKind.RUN_COMMAND,
                 command=("python3", "-c", "print('not approved')"),
@@ -93,7 +99,11 @@ class LocalWorkspaceTests(unittest.TestCase):
         )
 
         self.assertFalse(result.success)
-        self.assertIn("not allowlisted", result.output)
+        self.assertIn("not approved", result.output)
+
+    def _approve(self, command: tuple[str, ...]) -> bool:
+        self.approvals.append(command)
+        return True
 
     def test_git_status_action_uses_optional_git_tool(self) -> None:
         result = self.workspace.execute(CodingAction(ActionKind.GIT_STATUS))

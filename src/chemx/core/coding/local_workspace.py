@@ -14,6 +14,7 @@ from pathlib import Path
 
 from ...tools import (
     BashTool,
+    CommandApproval,
     CommandTool,
     EditTool,
     GitTool,
@@ -33,13 +34,13 @@ class LocalWorkspace:
     """Execute coding actions inside one bounded local directory.
 
     Paths are resolved by ``WorkspacePaths`` and cannot escape ``root``.
-    Commands must exactly match the allowlist. Bash remains disabled unless the
-    caller explicitly enables it. These restrictions belong to the workspace
-    rather than the model so execution policy cannot be bypassed by prompting.
+    Commands require approval from the caller. Bash remains disabled unless
+    the caller explicitly enables it. These restrictions belong to the
+    workspace rather than the model so prompting cannot bypass them.
     """
 
     root: Path
-    allowed_commands: tuple[tuple[str, ...], ...] = ()
+    command_approval: CommandApproval | None = None
     enable_bash: bool = False
     max_files: int = 100
     max_output_chars: int = 20_000
@@ -66,7 +67,7 @@ class LocalWorkspace:
         self.searcher = SearchTool(self.paths, max_chars=self.max_output_chars)
         self.commands = CommandTool(
             self.paths,
-            allowed_commands=self.allowed_commands,
+            approval=self.command_approval,
             timeout=self.command_timeout,
             max_chars=self.max_output_chars,
         )
@@ -78,11 +79,11 @@ class LocalWorkspace:
         self.git = GitTool(self.paths, max_chars=self.max_output_chars)
         self._initial_snapshot = self._snapshot()
         logger.info(
-            "workspace initialized root=%s type=%s files=%d commands=%d bash=%s",
+            "workspace initialized root=%s type=%s files=%d approval=%s bash=%s",
             self.root,
             "git" if self.git.is_repository() else "directory",
             len(self._initial_snapshot),
-            len(self.allowed_commands),
+            self.command_approval is not None,
             self.enable_bash,
         )
 

@@ -62,26 +62,21 @@ class CodingAgent(Agent):
         workspace: CodingWorkspace,
         *,
         max_steps: int = 20,
-        verification_command: Sequence[str] = (),
     ) -> str:
-        """Generate a plan, execute bounded actions, verify, and summarize."""
-        logger.info(
-            "automatic coding workflow started max_steps=%d verification=%s",
-            max_steps,
-            bool(verification_command),
-        )
+        """Generate a plan, execute bounded actions, and summarize."""
+        logger.info("automatic coding workflow started max_steps=%d", max_steps)
         context = workspace.inspect(task)
         logger.debug("workspace inspection completed context_chars=%d", len(context))
         plan = CodingPlan.from_model(
             self._complete_step(build_plan_prompt(task, context))
         )
         logger.info("model-generated coding plan created chars=%d", len(plan.text))
+        logger.debug("model-generated coding plan:\n%s", plan.text)
         return self._execute_model_loop(
             task,
             plan,
             workspace,
             max_steps=max_steps,
-            verification_command=verification_command,
         )
 
     def run_plan(
@@ -91,20 +86,14 @@ class CodingAgent(Agent):
         workspace: CodingWorkspace,
         *,
         max_steps: int = 20,
-        verification_command: Sequence[str] = (),
     ) -> str:
         """Use an exact user-authored plan while the model selects actions."""
-        logger.info(
-            "user-plan coding workflow started max_steps=%d verification=%s",
-            max_steps,
-            bool(verification_command),
-        )
+        logger.info("user-plan coding workflow started max_steps=%d", max_steps)
         return self._execute_model_loop(
             task,
             CodingPlan.from_user(plan),
             workspace,
             max_steps=max_steps,
-            verification_command=verification_command,
         )
 
     def run_actions(
@@ -129,6 +118,11 @@ class CodingAgent(Agent):
                 run.step,
                 action.kind.value,
             )
+            logger.debug(
+                "user-authored action step=%d:\n%s",
+                run.step,
+                _describe_action(action),
+            )
             result = workspace.execute(action)
             self.loop.record_result(run, result)
             if not result.success:
@@ -152,7 +146,6 @@ class CodingAgent(Agent):
         workspace: CodingWorkspace,
         *,
         max_steps: int,
-        verification_command: Sequence[str],
     ) -> str:
         if max_steps < 1:
             raise ValueError("max_steps must be at least 1.")
@@ -160,39 +153,29 @@ class CodingAgent(Agent):
 
         for _ in range(max_steps):
             logger.debug("requesting next model action step=%d", run.step + 1)
-            action = parse_action(
-                self._complete_step(
-                    build_action_prompt(
-                        task=run.task,
-                        plan=plan,
-                        observations=run.results,
-                    )
+            action_response = self._complete_step(
+                build_action_prompt(
+                    task=run.task,
+                    plan=plan,
+                    observations=run.results,
                 )
             )
+            logger.debug(
+                "model-selected coding step=%d:\n%s",
+                run.step + 1,
+                action_response,
+            )
+            action = parse_action(action_response)
             logger.info(
                 "model selected action step=%d kind=%s",
                 run.step + 1,
                 action.kind.value,
             )
-
-            if action.kind is ActionKind.FINISH and verification_command:
-                # A finish request is provisional until the configured
-                # verification command succeeds.
-                logger.info(
-                    "finish requested; running mandatory verification command"
-                )
-                verification = CodingAction(
-                    kind=ActionKind.RUN_COMMAND,
-                    command=tuple(verification_command),
-                )
-                self.loop.begin_action(run)
-                result = workspace.execute(verification)
-                self.loop.record_result(run, result)
-                if not result.success:
-                    logger.error(
-                        "verification failed; returning result to model"
-                    )
-                    continue
+            logger.debug(
+                "workspace action to execute step=%d:\n%s",
+                run.step + 1,
+                _describe_action(action),
+            )
 
             self.loop.begin_action(run)
             result = workspace.execute(action)
@@ -263,3 +246,23 @@ class CodingAgent(Agent):
             f"Executed {successful} user-authored action(s).\n"
             f"Final diff:\n{diff or '(no changes)'}"
         )
+
+
+def _describe_action(action: CodingAction) -> str:
+    """Format one action for detailed diagnostics without empty fields."""
+    details = [f"kind: {action.kind.value}"]
+    for field_name in (
+        "path",
+        "query",
+        "old_text",
+        "new_text",
+        "content",
+        "script",
+        "message",
+    ):
+        value = getattr(action, field_name)
+        if value is not None:
+            details.append(f"{field_name}: {value}")
+    if action.command:
+        details.append(f"command: {list(action.command)!r}")
+    return "\n".join(details)
