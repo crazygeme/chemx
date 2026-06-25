@@ -1,29 +1,11 @@
 """Workspace-bound interactive sessions for the coding agent."""
 
-import re
 from dataclasses import dataclass
 
 from .agent import CodingAgent
+from .router import WorkflowKind, WorkflowRouter
+from .workflow import DOCUMENT_WORKFLOW
 from .workspace import CodingWorkspace
-
-_CONVERSATIONAL_MESSAGES = {
-    "awesome",
-    "good",
-    "good job",
-    "got it",
-    "great",
-    "great job",
-    "looks good",
-    "nice",
-    "nice work",
-    "ok",
-    "okay",
-    "perfect",
-    "sounds good",
-    "thank you",
-    "thanks",
-    "well done",
-}
 
 
 @dataclass
@@ -33,20 +15,46 @@ class CodingSession:
     agent: CodingAgent
     workspace: CodingWorkspace
     max_steps: int = 20
+    router: WorkflowRouter | None = None
+    document_agent: CodingAgent | None = None
+
+    def __post_init__(self) -> None:
+        if self.router is None:
+            self.router = WorkflowRouter(
+                self.agent.model,
+                context_policy=self.agent.context_policy,
+            )
+        if self.document_agent is None:
+            self.document_agent = CodingAgent(
+                model=self.agent.model,
+                system_prompt=DOCUMENT_WORKFLOW.system_prompt,
+                workflow=DOCUMENT_WORKFLOW,
+                context_policy=self.agent.context_policy,
+                progress_output=self.agent.progress_output,
+            )
 
     def run(self, user_input: str) -> str:
-        """Run conversational acknowledgements or a workspace-backed task."""
-        if _is_conversational_message(user_input):
-            return self.agent.run(user_input)
+        """Classify input and run the selected bounded workflow."""
+        assert self.router is not None
+        route = self.router.classify(user_input)
+        if route.kind is WorkflowKind.CONVERSATION:
+            return self.agent.run(route.objective)
+        if route.kind is WorkflowKind.DOCUMENT:
+            assert self.document_agent is not None
+            return self.document_agent.run_workflow(
+                route.objective,
+                self.workspace,
+                max_steps=self.max_steps,
+            )
         return self.agent.run_workflow(
-            user_input,
-            self.workspace,
-            max_steps=self.max_steps,
+            route.objective, self.workspace, max_steps=self.max_steps
         )
 
     def clear(self) -> None:
         """Clear conversation history retained by the underlying agent."""
         self.agent.clear()
+        if self.document_agent is not None:
+            self.document_agent.clear()
 
 
 def create_coding_session(
@@ -61,10 +69,3 @@ def create_coding_session(
         workspace=workspace,
         max_steps=max_steps,
     )
-
-
-def _is_conversational_message(user_input: str) -> bool:
-    """Recognize short social replies without guessing about task-like text."""
-    normalized = re.sub(r"[^\w\s]", "", user_input.casefold())
-    normalized = " ".join(normalized.split())
-    return normalized in _CONVERSATIONAL_MESSAGES

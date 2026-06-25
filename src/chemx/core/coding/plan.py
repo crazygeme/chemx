@@ -57,10 +57,15 @@ def build_action_prompt(
     plan: CodingPlan,
     observations: Sequence[ActionResult],
     context_policy: ContextPolicy | None = None,
+    observation_summary: str | None = None,
 ) -> str:
     """Ask the model to select exactly one structured workspace action."""
     policy = context_policy or ContextPolicy()
-    observation_text = format_observations(observations, policy)
+    observation_text = format_observations(
+        observations,
+        policy,
+        summary=observation_summary,
+    )
     return (
         "Choose exactly one next coding action as a JSON object.\n"
         f"Task:\n{task}\n\n"
@@ -93,10 +98,15 @@ def build_summary_prompt(
     observations: Sequence[ActionResult],
     diff: str,
     context_policy: ContextPolicy | None = None,
+    observation_summary: str | None = None,
 ) -> str:
     """Ask for a factual summary based on actual tool results."""
     policy = context_policy or ContextPolicy()
-    results = format_observations(observations, policy)
+    results = format_observations(
+        observations,
+        policy,
+        summary=observation_summary,
+    )
     bounded_diff = (
         truncate_text(diff, policy.max_diff_chars)
         if diff

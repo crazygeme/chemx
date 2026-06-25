@@ -121,6 +121,13 @@ class CodingAgentTests(unittest.TestCase):
 
     def test_coding_session_runs_workspace_backed_interactive_turn(self) -> None:
         model = StaticModel(
+            json.dumps(
+                {
+                    "kind": "coding",
+                    "objective": "Review parser",
+                    "confidence": 0.95,
+                }
+            ),
             "Inspect files.",
             action_response("finish", message="No changes needed."),
             "No changes were required.",
@@ -138,7 +145,16 @@ class CodingAgentTests(unittest.TestCase):
         self.assertEqual(workspace.actions[0].kind, ActionKind.FINISH)
 
     def test_coding_session_treats_good_job_as_conversation(self) -> None:
-        model = StaticModel("Thanks!")
+        model = StaticModel(
+            json.dumps(
+                {
+                    "kind": "conversation",
+                    "objective": "good job",
+                    "confidence": 0.99,
+                }
+            ),
+            "Thanks!",
+        )
         workspace = RecordingWorkspace()
         session = CodingSession(
             agent=CodingAgent(model=model),
@@ -149,11 +165,23 @@ class CodingAgentTests(unittest.TestCase):
 
         self.assertEqual(response, "Thanks!")
         self.assertEqual(workspace.actions, [])
-        self.assertEqual(len(model.calls), 1)
-        self.assertEqual(model.calls[0][-1].content, "good job")
+        self.assertEqual(len(model.calls), 2)
+        self.assertIn("requested workflow", model.calls[0][-1].content)
+        self.assertIn(
+            "social replies are conversation",
+            model.calls[0][-1].content,
+        )
+        self.assertEqual(model.calls[1][-1].content, "good job")
 
     def test_coding_session_does_not_misclassify_task_with_praise(self) -> None:
         model = StaticModel(
+            json.dumps(
+                {
+                    "kind": "coding",
+                    "objective": "Good job, now update the parser",
+                    "confidence": 0.95,
+                }
+            ),
             "Update the parser.",
             action_response("finish", message="Complete."),
             "Parser update complete.",
@@ -302,6 +330,7 @@ class CodingAgentTests(unittest.TestCase):
             "Inspect files.",
             action_response("list_files"),
             action_response("list_files"),
+            "Earlier list_files succeeded and returned repository output.",
             action_response("list_files"),
         )
         agent = CodingAgent(
@@ -315,8 +344,15 @@ class CodingAgentTests(unittest.TestCase):
 
         agent.run_workflow("Inspect repository", LargeWorkspace(), max_steps=3)
 
-        third_action_prompt = model.calls[3][1].content
-        self.assertIn("1 earlier observation(s) omitted", third_action_prompt)
+        compaction_prompt = model.calls[3][1].content
+        self.assertIn("Compress coding tool observations", compaction_prompt)
+        self.assertIn("list_files (ok)", compaction_prompt)
+
+        third_action_prompt = model.calls[4][1].content
+        self.assertIn(
+            "Earlier list_files succeeded",
+            third_action_prompt,
+        )
         self.assertIn("begin-", third_action_prompt)
         self.assertIn("-end", third_action_prompt)
         self.assertIn("content truncated", third_action_prompt)

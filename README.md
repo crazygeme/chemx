@@ -163,14 +163,18 @@ During an interactive session:
 
 Every model request is bounded by an approximate token budget obtained from
 the selected model backend. The system prompt and current request are retained,
-followed by the newest complete conversation turns that fit. Oversized coding
-observations and final diffs retain their beginning and end, while older
-observations are omitted.
+followed by the newest complete conversation turns that fit. Before older
+conversation turns or coding observations are dropped, the model compresses
+them into durable context that preserves decisions, constraints, file paths,
+edits, errors, test outcomes, and unresolved work. Recent raw context remains
+available alongside that summary.
 
 The response reserve is calculated as one eighth of the model context window,
 with lower and upper bounds for unusually small or large windows. The token
 estimate is dependency-free and assumes approximately four characters per
-token. Library users can still override the derived policy when needed:
+token. Hard truncation remains as a final safeguard for a single oversized
+request or tool result. Library users can still override the derived policy
+when needed:
 
 ```python
 from chemx.core import Agent, ContextPolicy

@@ -15,13 +15,10 @@ from ...backends import Message, ModelBackend
 from ..agent import Agent
 from ..context import fit_messages
 from .action import ActionKind, ActionResult, CodingAction, parse_action
+from .context import build_observation_compaction_prompt
 from .loop import CodingLoop, CodingRun
-from .plan import (
-    CodingPlan,
-    build_action_prompt,
-    build_plan_prompt,
-    build_summary_prompt,
-)
+from .plan import CodingPlan
+from .workflow import CODING_WORKFLOW, WorkflowProfile
 from .workspace import CodingWorkspace
 
 logger = logging.getLogger(__name__)
@@ -29,11 +26,7 @@ logger = logging.getLogger(__name__)
 ProgressOutput = Callable[[str], None]
 
 
-CODING_SYSTEM_PROMPT = """You are a software engineering agent.
-Inspect relevant code before editing. Keep plans separate from tool actions.
-Make narrow, justified changes, preserve unrelated behavior, and verify work
-with appropriate commands. Never claim a file edit or test result unless a
-workspace observation confirms it."""
+CODING_SYSTEM_PROMPT = CODING_WORKFLOW.system_prompt
 
 
 @dataclass
@@ -52,6 +45,7 @@ class CodingAgent(Agent):
 
     model: ModelBackend
     system_prompt: str = CODING_SYSTEM_PROMPT
+    workflow: WorkflowProfile = CODING_WORKFLOW
     loop: CodingLoop = field(default_factory=CodingLoop)
     progress_output: ProgressOutput | None = field(default=None, repr=False)
     current_run: CodingRun | None = field(default=None, init=False)
@@ -72,7 +66,7 @@ class CodingAgent(Agent):
         context = workspace.inspect(task)
         logger.debug("workspace inspection completed context_chars=%d", len(context))
         plan = CodingPlan.from_model(
-            self._complete_step(build_plan_prompt(task, context))
+            self._complete_step(self.workflow.build_plan_prompt(task, context))
         )
         logger.info("model-generated coding plan created chars=%d", len(plan.text))
         self._emit_progress(f"Plan:\n{plan.text}")
@@ -160,13 +154,16 @@ class CodingAgent(Agent):
         run = self._initialize_run(task, plan, workspace)
 
         for _ in range(max_steps):
+            self._compact_observations_if_needed(run)
             logger.debug("requesting next model action step=%d", run.step + 1)
+            recent_results = run.results[run.compacted_result_count :]
             action_response = self._complete_step(
-                build_action_prompt(
-                    task=run.task,
-                    plan=plan,
-                    observations=run.results,
-                    context_policy=self.context_policy,
+                self.workflow.build_action_prompt(
+                    run.task,
+                    plan,
+                    recent_results,
+                    self.context_policy,
+                    run.observation_summary,
                 )
             )
             action = parse_action(action_response)
@@ -190,20 +187,25 @@ class CodingAgent(Agent):
             )
 
             if action.kind is ActionKind.FINISH and result.success:
+                self._compact_observations_if_needed(run)
+                recent_results = run.results[run.compacted_result_count :]
                 response = self._complete_step(
-                    build_summary_prompt(
-                        task=run.task,
-                        plan=plan,
-                        observations=run.results,
-                        diff=workspace.changes(),
-                        context_policy=self.context_policy,
+                    self.workflow.build_summary_prompt(
+                        run.task,
+                        plan,
+                        recent_results,
+                        workspace.changes(),
+                        self.context_policy,
+                        run.observation_summary,
                     )
                 )
                 self.loop.complete(run, response)
                 self._record_workflow_turn(run.task, response)
                 return response
 
-        reason = f"Coding workflow reached the {max_steps}-step limit."
+        reason = (
+            f"{self.workflow.name} workflow reached the {max_steps}-step limit."
+        )
         self.loop.fail(run, reason)
         self._record_workflow_turn(run.task, reason)
         return reason
@@ -236,6 +238,44 @@ class CodingAgent(Agent):
             raise RuntimeError("The model returned an empty response.")
         logger.debug("model completion received response_chars=%d", len(response))
         return response
+
+    def _compact_observations_if_needed(self, run: CodingRun) -> None:
+        """Summarize older tool results once the raw observation limit is reached."""
+        assert self.context_policy is not None
+        uncompacted = run.results[run.compacted_result_count :]
+        compact_count = 0
+        remaining_chars = sum(
+            min(len(result.output), self.context_policy.max_observation_chars)
+            for result in uncompacted
+        )
+        while (
+            len(uncompacted) - compact_count
+            > self.context_policy.max_observations
+            or remaining_chars
+            > self.context_policy.max_observation_chars_total
+        ):
+            result = uncompacted[compact_count]
+            remaining_chars -= min(
+                len(result.output),
+                self.context_policy.max_observation_chars,
+            )
+            compact_count += 1
+
+        if compact_count == 0:
+            return
+
+        to_compact = uncompacted[:compact_count]
+        prompt = build_observation_compaction_prompt(
+            run.observation_summary,
+            to_compact,
+        )
+        run.observation_summary = self._complete_step(prompt)
+        run.compacted_result_count += len(to_compact)
+        logger.info(
+            "coding observations compacted results=%d summary_chars=%d",
+            len(to_compact),
+            len(run.observation_summary),
+        )
 
     def _record_workflow_turn(self, task: str, response: str) -> None:
         self.history.extend(

@@ -41,6 +41,8 @@ class CodingRun:
     context: str | None = None
     plan: CodingPlan | None = None
     results: list[ActionResult] = field(default_factory=list)
+    observation_summary: str | None = None
+    compacted_result_count: int = 0
     response: str | None = None
     failure_reason: str | None = None
 

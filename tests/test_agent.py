@@ -61,10 +61,12 @@ class AgentTests(unittest.TestCase):
         model = RecordingModel(["Hello."])
         agent = Agent(model=model)
         agent.run("Hi")
+        agent.context_summary = "Earlier context."
 
         agent.clear()
 
         self.assertEqual(agent.history, [])
+        self.assertIsNone(agent.context_summary)
 
     def test_empty_input_is_rejected(self) -> None:
         agent = Agent(model=RecordingModel([]))
@@ -73,13 +75,13 @@ class AgentTests(unittest.TestCase):
             agent.run("  ")
 
     def test_context_policy_retains_recent_complete_turns(self) -> None:
-        model = RecordingModel(["one", "two", "three"])
+        model = RecordingModel(["one", "two", "Earlier: first/one.", "three"])
         agent = Agent(
             model=model,
             system_prompt="system",
             context_policy=ContextPolicy(
-                context_window_tokens=60,
-                reserved_output_tokens=10,
+                context_window_tokens=1_000,
+                reserved_output_tokens=100,
                 recent_turns=1,
             ),
         )
@@ -88,12 +90,20 @@ class AgentTests(unittest.TestCase):
         agent.run("second")
         agent.run("third")
 
-        third_call = model.calls[2]
-        self.assertEqual(third_call[0], Message("system", "system"))
-        self.assertIn("earlier conversation message(s) omitted", third_call[1].content)
-        self.assertEqual(third_call[2], Message("user", "second"))
-        self.assertEqual(third_call[3], Message("assistant", "two"))
-        self.assertEqual(third_call[4], Message("user", "third"))
+        compaction_call = model.calls[2]
+        self.assertIn("Compress prior conversation context", compaction_call[0].content)
+        self.assertIn("user: first", compaction_call[1].content)
+
+        third_call = model.calls[3]
+        self.assertIn("Earlier: first/one.", third_call[0].content)
+        self.assertEqual(third_call[1], Message("user", "second"))
+        self.assertEqual(third_call[2], Message("assistant", "two"))
+        self.assertEqual(third_call[3], Message("user", "third"))
+        self.assertEqual(agent.context_summary, "Earlier: first/one.")
+        self.assertEqual(agent.history[-2:], [
+            Message("user", "third"),
+            Message("assistant", "three"),
+        ])
 
     def test_oversized_current_input_is_truncated_to_budget(self) -> None:
         model = RecordingModel(["ok"])
@@ -110,7 +120,7 @@ class AgentTests(unittest.TestCase):
         self.assertIn("content truncated", model.calls[0][-1].content)
 
     def test_zero_recent_turns_omits_all_history(self) -> None:
-        model = RecordingModel(["one", "two"])
+        model = RecordingModel(["one", "First exchange summarized.", "two"])
         agent = Agent(
             model=model,
             context_policy=ContextPolicy(recent_turns=0),
@@ -119,8 +129,8 @@ class AgentTests(unittest.TestCase):
         agent.run("first")
         agent.run("second")
 
-        second_call = model.calls[1]
-        self.assertIn("2 earlier conversation message(s) omitted", second_call[1].content)
+        second_call = model.calls[2]
+        self.assertIn("First exchange summarized.", second_call[0].content)
         self.assertEqual(second_call[-1], Message("user", "second"))
         self.assertNotIn(Message("user", "first"), second_call)
 
