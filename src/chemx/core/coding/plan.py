@@ -72,7 +72,7 @@ def build_action_prompt(
         f"Plan:\n{plan.text}\n\n"
         f"Observations:\n{observation_text}\n\n"
         "Supported forms:\n"
-        '{"kind":"list_files"}\n'
+        '{"kind":"list_files","path":"optional/relative/directory"}\n'
         '{"kind":"read_file","path":"relative/path.py"}\n'
         '{"kind":"search_text","query":"symbol or text"}\n'
         '{"kind":"replace_text","path":"file.py","old_text":"exact old",'
@@ -82,7 +82,9 @@ def build_action_prompt(
         '{"kind":"run_command","command":["python3","-m","unittest"]}\n'
         '{"kind":"git_status"}\n'
         '{"kind":"finish","message":"work and verification are complete"}\n'
-        "Return JSON only. Read relevant files before editing. Use exact text "
+        "Return JSON only. Scope list_files to a directory identified by the "
+        "plan whenever possible; omit path only when the whole workspace must "
+        "be inspected. Read relevant files before editing. Use exact text "
         "replacement for narrow edits and write_file only when full replacement "
         "is justified. Use run_command with an argument array for compilation or "
         "verification; commands run directly without Bash and require user "

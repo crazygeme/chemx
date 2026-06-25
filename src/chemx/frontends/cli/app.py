@@ -31,6 +31,7 @@ from ...core import (
     create_coding_session,
 )
 from ...core.observability import configure_logging
+from .prompt import InteractivePrompt
 
 AgentFactory = Callable[..., Agent]
 
@@ -283,10 +284,12 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 2
 
     print("Commands: /clear, /exit")
+    print("Input: Enter submits; Shift+Enter or Alt+Enter inserts a newline.")
+    interactive_prompt = InteractivePrompt()
 
     while True:
         try:
-            user_input = input("you> ")
+            user_input = interactive_prompt.read()
         except (EOFError, KeyboardInterrupt):
             print()
             return 0

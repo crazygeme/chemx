@@ -4,6 +4,7 @@ from ..context import ContextPolicy
 from .action import ActionKind, ActionResult, CodingAction, parse_action
 from .agent import CODING_SYSTEM_PROMPT, CodingAgent, ProgressOutput
 from .local_workspace import LocalWorkspace
+from .lifecycle import DocumentLifecycle, WorkflowLifecycle
 from .loop import CodingLoop, CodingPhase, CodingRun
 from .plan import CodingPlan, PlanSource
 from .router import WorkflowKind, WorkflowRoute, WorkflowRouter
@@ -26,10 +27,12 @@ __all__ = [
     "CODING_WORKFLOW",
     "ContextPolicy",
     "DOCUMENT_WORKFLOW",
+    "DocumentLifecycle",
     "LocalWorkspace",
     "PlanSource",
     "ProgressOutput",
     "WorkflowKind",
+    "WorkflowLifecycle",
     "WorkflowProfile",
     "WorkflowRoute",
     "WorkflowRouter",

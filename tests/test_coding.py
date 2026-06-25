@@ -79,7 +79,30 @@ class CodingAgentTests(unittest.TestCase):
             "command: ['python3', '-m', 'unittest']",
             output,
         )
-        self.assertIn("All tests passed.", output)
+        self.assertIn("Result 2 (ok): run_command", output)
+        self.assertNotIn("All tests passed.", output)
+
+    def test_progress_output_redacts_action_and_result_contents(self) -> None:
+        messages: list[str] = []
+        model = StaticModel(
+            "Create a private document.",
+            action_response(
+                "create_file",
+                path="notes.txt",
+                content="private document contents",
+            ),
+            action_response("finish", message="Private completion message."),
+            "Created notes.txt.",
+        )
+        agent = CodingAgent(model=model, progress_output=messages.append)
+
+        agent.run_workflow("Create notes", RecordingWorkspace())
+
+        output = "\n".join(messages)
+        self.assertIn("content: [redacted, 25 chars]", output)
+        self.assertIn("message: [redacted, 27 chars]", output)
+        self.assertNotIn("private document contents", output)
+        self.assertNotIn("Private completion message.", output)
 
     def test_debug_logging_keeps_plan_and_actions_in_progress_output(self) -> None:
         progress: list[str] = []
@@ -118,6 +141,46 @@ class CodingAgentTests(unittest.TestCase):
             "commands run directly without Bash and require user approval",
             model.calls[1][1].content,
         )
+        self.assertIn(
+            "Scope list_files to a directory identified by the plan",
+            model.calls[1][1].content,
+        )
+
+    def test_invalid_model_action_is_repaired_before_execution(self) -> None:
+        progress: list[str] = []
+        model = StaticModel(
+            "Inspect parser.",
+            action_response("scan_directory", path="src"),
+            action_response("read_file", path="src/parser.py"),
+            action_response("finish", message="Complete."),
+            "Reviewed parser.py.",
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(model=model, progress_output=progress.append)
+
+        response = agent.run_workflow("Review parser", workspace)
+
+        self.assertEqual(response, "Reviewed parser.py.")
+        self.assertEqual(
+            [action.kind for action in workspace.actions],
+            [ActionKind.READ_FILE, ActionKind.FINISH],
+        )
+        self.assertIn("previous response was invalid", model.calls[2][1].content)
+        self.assertIn("requesting corrected JSON", "\n".join(progress))
+
+    def test_two_invalid_model_actions_fail_without_workspace_execution(self) -> None:
+        model = StaticModel(
+            "Inspect parser.",
+            action_response("scan_directory", path="src"),
+            action_response("inspect_directory", path="src"),
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(model=model)
+
+        with self.assertRaisesRegex(ValueError, "invalid action twice"):
+            agent.run_workflow("Review parser", workspace)
+
+        self.assertEqual(workspace.actions, [])
 
     def test_coding_session_runs_workspace_backed_interactive_turn(self) -> None:
         model = StaticModel(

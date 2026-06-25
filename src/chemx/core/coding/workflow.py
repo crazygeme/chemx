@@ -5,6 +5,7 @@ from typing import Callable, Sequence
 
 from ..context import ContextPolicy
 from .action import ActionResult
+from .lifecycle import DocumentLifecycle, WorkflowLifecycle
 from .plan import (
     CodingPlan,
     build_action_prompt,
@@ -22,6 +23,7 @@ SummaryPromptBuilder = Callable[
     [str, CodingPlan, Sequence[ActionResult], str, ContextPolicy, str | None],
     str,
 ]
+LifecycleFactory = Callable[[], WorkflowLifecycle]
 
 
 @dataclass(frozen=True)
@@ -33,6 +35,7 @@ class WorkflowProfile:
     build_plan_prompt: PlanPromptBuilder
     build_action_prompt: ActionPromptBuilder
     build_summary_prompt: SummaryPromptBuilder
+    lifecycle_factory: LifecycleFactory | None = None
 
 
 def _coding_action_prompt(
@@ -116,7 +119,7 @@ def build_document_action_prompt(
         f"Plan:\n{plan.text}\n\n"
         f"Observations:\n{observation_text}\n\n"
         "Supported forms:\n"
-        '{"kind":"list_files"}\n'
+        '{"kind":"list_files","path":"optional/relative/directory"}\n'
         '{"kind":"read_file","path":"relative/path"}\n'
         '{"kind":"search_text","query":"source text or symbol"}\n'
         '{"kind":"replace_text","path":"document.md","old_text":"exact old",'
@@ -124,10 +127,18 @@ def build_document_action_prompt(
         '{"kind":"create_file","path":"document.md","content":"complete content"}\n'
         '{"kind":"write_file","path":"document.md","content":"complete content"}\n'
         '{"kind":"finish","message":"document and review are complete"}\n'
-        "Return JSON only. Inspect relevant source material before drafting. "
+        "Return JSON only. Scope list_files to a directory identified by the "
+        "plan whenever possible; omit path only when the whole workspace must "
+        "be inspected. Follow this lifecycle strictly: research source files, "
+        "draft or revise the document, read the changed document once to review "
+        "that version, then finish. Complete all source research before the "
+        "first create_file, write_file, or replace_text action. After drafting, "
+        "do not list, search, or read unrelated source files. Do not read an "
+        "unchanged document version more than once. "
         "Use create_file for a new document, replace_text for narrow revisions, "
         "and write_file only when a complete rewrite is justified. Finish only "
-        "after checking the document against the task and plan."
+        "after the latest document version has been read and checked against "
+        "the task and plan."
     )
 
 
@@ -168,4 +179,5 @@ was written unless a workspace observation confirms it.""",
     build_plan_prompt=build_document_plan_prompt,
     build_action_prompt=build_document_action_prompt,
     build_summary_prompt=build_document_summary_prompt,
+    lifecycle_factory=DocumentLifecycle,
 )

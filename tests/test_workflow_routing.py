@@ -10,6 +10,7 @@ from chemx.core.coding import (
     CodingSession,
     WorkflowKind,
     WorkflowRouter,
+    DOCUMENT_WORKFLOW,
 )
 
 
@@ -123,6 +124,7 @@ class RoutedSessionTests(unittest.TestCase):
                 path="docs/parser.md",
                 content="# Parser\n\nParser usage.",
             ),
+            action_response("read_file", path="docs/parser.md"),
             action_response("finish", message="Document reviewed."),
             "Created and reviewed docs/parser.md.",
         )
@@ -140,6 +142,7 @@ class RoutedSessionTests(unittest.TestCase):
             [
                 ActionKind.READ_FILE,
                 ActionKind.CREATE_FILE,
+                ActionKind.READ_FILE,
                 ActionKind.FINISH,
             ],
         )
@@ -148,6 +151,69 @@ class RoutedSessionTests(unittest.TestCase):
         self.assertIn(
             "next document-production action",
             model.calls[2][-1].content,
+        )
+
+    def test_document_workflow_blocks_source_research_after_drafting(self) -> None:
+        model = StaticModel(
+            "1. Draft the guide.\n2. Review it.",
+            action_response(
+                "create_file",
+                path="docs/parser.md",
+                content="# Parser\n\nParser usage.",
+            ),
+            action_response("read_file", path="src/parser.py"),
+            action_response("read_file", path="docs/parser.md"),
+            action_response("finish", message="Document reviewed."),
+            "Created and reviewed docs/parser.md.",
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(
+            model=model,
+            workflow=DOCUMENT_WORKFLOW,
+            system_prompt=DOCUMENT_WORKFLOW.system_prompt,
+        )
+
+        response = agent.run_workflow("Generate parser documentation", workspace)
+
+        self.assertEqual(response, "Created and reviewed docs/parser.md.")
+        self.assertEqual(
+            [action.path for action in workspace.actions],
+            ["docs/parser.md", "docs/parser.md", None],
+        )
+        self.assertIn(
+            "unrelated source research is closed",
+            model.calls[3][-1].content,
+        )
+
+    def test_document_workflow_blocks_duplicate_unchanged_review(self) -> None:
+        model = StaticModel(
+            "1. Draft the guide.\n2. Review it.",
+            action_response(
+                "create_file",
+                path="docs/parser.md",
+                content="# Parser\n\nParser usage.",
+            ),
+            action_response("read_file", path="docs/parser.md"),
+            action_response("read_file", path="docs/parser.md"),
+            action_response("finish", message="Document reviewed."),
+            "Created and reviewed docs/parser.md.",
+        )
+        workspace = RecordingWorkspace()
+        agent = CodingAgent(
+            model=model,
+            workflow=DOCUMENT_WORKFLOW,
+            system_prompt=DOCUMENT_WORKFLOW.system_prompt,
+        )
+
+        agent.run_workflow("Generate parser documentation", workspace)
+
+        self.assertEqual(
+            [action.kind for action in workspace.actions],
+            [ActionKind.CREATE_FILE, ActionKind.READ_FILE, ActionKind.FINISH],
+        )
+        self.assertIn(
+            "already been reviewed at its current version",
+            model.calls[4][-1].content,
         )
 
     def test_model_routed_conversation_does_not_touch_workspace(self) -> None:

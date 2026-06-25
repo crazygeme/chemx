@@ -13,7 +13,7 @@ from typing import Callable, Sequence
 
 from ...backends import Message, ModelBackend
 from ..agent import Agent
-from ..context import fit_messages
+from ..context import fit_messages, truncate_text
 from .action import ActionKind, ActionResult, CodingAction, parse_action
 from .context import build_observation_compaction_prompt
 from .loop import CodingLoop, CodingRun
@@ -152,21 +152,31 @@ class CodingAgent(Agent):
             raise ValueError("max_steps must be at least 1.")
         assert self.context_policy is not None
         run = self._initialize_run(task, plan, workspace)
+        lifecycle = (
+            self.workflow.lifecycle_factory()
+            if self.workflow.lifecycle_factory is not None
+            else None
+        )
 
         for _ in range(max_steps):
             self._compact_observations_if_needed(run)
             logger.debug("requesting next model action step=%d", run.step + 1)
             recent_results = run.results[run.compacted_result_count :]
-            action_response = self._complete_step(
-                self.workflow.build_action_prompt(
-                    run.task,
-                    plan,
-                    recent_results,
-                    self.context_policy,
-                    run.observation_summary,
-                )
+            action_prompt = self.workflow.build_action_prompt(
+                run.task,
+                plan,
+                recent_results,
+                self.context_policy,
+                run.observation_summary,
             )
-            action = parse_action(action_response)
+            action = self._select_action(
+                action_prompt,
+                validator=(
+                    lifecycle.validate
+                    if lifecycle is not None
+                    else None
+                ),
+            )
             logger.info(
                 "model selected action step=%d kind=%s",
                 run.step + 1,
@@ -179,6 +189,8 @@ class CodingAgent(Agent):
             self.loop.begin_action(run)
             result = workspace.execute(action)
             self.loop.record_result(run, result)
+            if lifecycle is not None:
+                lifecycle.record(result)
             self._emit_result(run.step, result)
             logger.debug(
                 "workspace observation step=%d output_chars=%d",
@@ -239,6 +251,47 @@ class CodingAgent(Agent):
         logger.debug("model completion received response_chars=%d", len(response))
         return response
 
+    def _select_action(
+        self,
+        prompt: str,
+        *,
+        validator: Callable[[CodingAction], None] | None = None,
+    ) -> CodingAction:
+        """Parse one model action, allowing one structured correction attempt."""
+        response = self._complete_step(prompt)
+        try:
+            action = parse_action(response)
+            if validator is not None:
+                validator(action)
+            return action
+        except ValueError as first_error:
+            validation_error = str(first_error)
+            logger.warning("invalid model action; requesting correction: %s", first_error)
+            self._emit_progress(
+                "The model returned an invalid action; requesting corrected JSON."
+            )
+
+        repair_prompt = (
+            f"{prompt}\n\n"
+            "The previous response was invalid and no workspace action ran.\n"
+            f"Validation error: {validation_error}\n"
+            "Invalid response:\n"
+            f"{truncate_text(response, 2_000)}\n\n"
+            "Return exactly one corrected JSON action using a supported kind. "
+            "Return JSON only."
+        )
+        repaired_response = self._complete_step(repair_prompt)
+        try:
+            action = parse_action(repaired_response)
+            if validator is not None:
+                validator(action)
+            return action
+        except ValueError as second_error:
+            raise ValueError(
+                "Model returned an invalid action twice. "
+                f"Final validation error: {second_error}"
+            ) from second_error
+
     def _compact_observations_if_needed(self, run: CodingRun) -> None:
         """Summarize older tool results once the raw observation limit is reached."""
         assert self.context_policy is not None
@@ -291,7 +344,9 @@ class CodingAgent(Agent):
 
     def _emit_result(self, step: int, result: ActionResult) -> None:
         status = "ok" if result.success else "failed"
-        self._emit_progress(f"Result {step} ({status}): {result.output}")
+        self._emit_progress(
+            f"Result {step} ({status}): {result.action.kind.value}"
+        )
 
     @staticmethod
     def _deterministic_summary(run: CodingRun, diff: str) -> str:
@@ -303,20 +358,14 @@ class CodingAgent(Agent):
 
 
 def _describe_action(action: CodingAction) -> str:
-    """Format one action for detailed diagnostics without empty fields."""
+    """Format action metadata without exposing payload contents."""
     details = [f"kind: {action.kind.value}"]
-    for field_name in (
-        "path",
-        "query",
-        "old_text",
-        "new_text",
-        "content",
-        "script",
-        "message",
-    ):
+    if action.path is not None:
+        details.append(f"path: {action.path}")
+    for field_name in ("query", "old_text", "new_text", "content", "script", "message"):
         value = getattr(action, field_name)
         if value is not None:
-            details.append(f"{field_name}: {value}")
+            details.append(f"{field_name}: [redacted, {len(value)} chars]")
     if action.command:
         details.append(f"command: {list(action.command)!r}")
     return "; ".join(details)

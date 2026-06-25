@@ -40,10 +40,15 @@ class CodingAction:
     @classmethod
     def from_dict(cls, value: dict[str, Any]) -> "CodingAction":
         """Parse and validate an action dictionary."""
+        raw_kind = value.get("kind")
         try:
-            kind = ActionKind(value["kind"])
-        except (KeyError, ValueError) as error:
-            raise ValueError("Action requires a supported 'kind'.") from error
+            kind = ActionKind(raw_kind)
+        except (TypeError, ValueError) as error:
+            supported = ", ".join(kind.value for kind in ActionKind)
+            raise ValueError(
+                f"Action requires a supported 'kind'; received {raw_kind!r}. "
+                f"Supported kinds: {supported}."
+            ) from error
 
         command_value = value.get("command", ())
         if not isinstance(command_value, (list, tuple)):

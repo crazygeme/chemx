@@ -86,6 +86,51 @@ class LocalWorkspaceTests(unittest.TestCase):
         self.assertFalse(result.success)
         self.assertIn("Refusing to overwrite", result.output)
 
+    def test_create_file_result_retains_content_for_internal_review(self) -> None:
+        result = self.workspace.execute(
+            CodingAction(
+                ActionKind.CREATE_FILE,
+                path="docs/guide.md",
+                content="# Guide\n\nPrivate draft.",
+            )
+        )
+
+        self.assertTrue(result.success)
+        self.assertIn("Document content retained", result.output)
+        self.assertIn("# Guide\n\nPrivate draft.", result.output)
+
+    def test_list_files_action_honors_requested_directory(self) -> None:
+        (self.root / "src" / "chemx").mkdir(parents=True)
+        (self.root / "src" / "chemx" / "agent.py").write_text(
+            "value = 1\n",
+            encoding="utf-8",
+        )
+        (self.root / ".venv" / "bin").mkdir(parents=True)
+        (self.root / ".venv" / "bin" / "activate").write_text(
+            "generated\n",
+            encoding="utf-8",
+        )
+
+        result = self.workspace.execute(
+            CodingAction(ActionKind.LIST_FILES, path="src/chemx")
+        )
+
+        self.assertTrue(result.success)
+        self.assertEqual(result.output, "src/chemx/agent.py")
+
+    def test_list_files_action_honors_gitignore(self) -> None:
+        (self.root / ".gitignore").write_text(".venv/\n", encoding="utf-8")
+        (self.root / ".venv" / "bin").mkdir(parents=True)
+        (self.root / ".venv" / "bin" / "activate").write_text(
+            "generated\n",
+            encoding="utf-8",
+        )
+
+        result = self.workspace.execute(CodingAction(ActionKind.LIST_FILES))
+
+        self.assertTrue(result.success)
+        self.assertNotIn(".venv", result.output)
+
     def test_command_requires_approval(self) -> None:
         workspace = LocalWorkspace(
             self.root,

@@ -12,7 +12,9 @@ license = { file = "LICENSE" }
 authors = [
     { name = "chemx contributors" },
 ]
-dependencies = []
+dependencies = [
+    "prompt-toolkit>=3.0.48,<4",
+]
 
 [project.scripts]
 chemx = "chemx.frontends.cli:main"

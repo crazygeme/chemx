@@ -72,7 +72,7 @@ class CliFrontendTests(unittest.TestCase):
 
         self.assertEqual(agent.system_prompt, "Custom industry prompt")
 
-    @patch("builtins.input", side_effect=["Write notes.txt", "/exit"])
+    @patch("chemx.frontends.cli.app.InteractivePrompt")
     @patch("chemx.frontends.cli.app.create_coding_session")
     @patch("chemx.frontends.cli.app._create_local_workspace")
     @patch("chemx.frontends.cli.app.prepare_backend")
@@ -83,8 +83,9 @@ class CliFrontendTests(unittest.TestCase):
         prepare_backend: Mock,
         create_workspace: Mock,
         create_session: Mock,
-        input_mock: Mock,
+        prompt_class: Mock,
     ) -> None:
+        prompt_class.return_value.read.side_effect = ["Write notes.txt", "/exit"]
         workspace = create_workspace.return_value
         session = create_session.return_value
         session.run.return_value = "Wrote notes.txt."
@@ -112,7 +113,7 @@ class CliFrontendTests(unittest.TestCase):
             max_steps=7,
         )
         session.run.assert_called_once_with("Write notes.txt")
-        self.assertEqual(input_mock.call_count, 2)
+        self.assertEqual(prompt_class.return_value.read.call_count, 2)
 
     @patch("builtins.input", return_value="yes")
     def test_command_approval_accepts_yes(self, input_mock: Mock) -> None:
@@ -145,7 +146,7 @@ class CliFrontendTests(unittest.TestCase):
         self.assertIn("Step 1:", rendered)
         self.assertIn("Task complete.", rendered)
 
-    @patch("builtins.input", side_effect=["Explain the sample", "/exit"])
+    @patch("chemx.frontends.cli.app.InteractivePrompt")
     @patch("chemx.frontends.cli.app._create_local_workspace")
     @patch("chemx.frontends.cli.app.prepare_backend")
     @patch("chemx.frontends.cli.app.create_backend", return_value=StaticModel())
@@ -154,13 +155,14 @@ class CliFrontendTests(unittest.TestCase):
         create_backend: Mock,
         prepare_backend: Mock,
         create_workspace: Mock,
-        input_mock: Mock,
+        prompt_class: Mock,
     ) -> None:
+        prompt_class.return_value.read.side_effect = ["Explain the sample", "/exit"]
         result = main(["--agent", "chemicals"])
 
         self.assertEqual(result, 0)
         create_workspace.assert_not_called()
-        self.assertEqual(input_mock.call_count, 2)
+        self.assertEqual(prompt_class.return_value.read.call_count, 2)
 
     @patch("chemx.frontends.cli.app.CodingAgent.run_actions", return_value="done")
     @patch(

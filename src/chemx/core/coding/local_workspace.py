@@ -119,7 +119,7 @@ class LocalWorkspace:
         )
         handlers = {
             ActionKind.LIST_FILES: lambda: "\n".join(
-                self.files.run(max_files=self.max_files)
+                self.files.run(action.path, max_files=self.max_files)
             ),
             ActionKind.READ_FILE: lambda: self.reader.run(action.path or ""),
             ActionKind.SEARCH_TEXT: lambda: self.searcher.run(action.query or ""),
@@ -143,6 +143,12 @@ class LocalWorkspace:
         }
         try:
             output = handlers[action.kind]()
+            if action.kind in {ActionKind.CREATE_FILE, ActionKind.WRITE_FILE}:
+                output = (
+                    f"{output}\n"
+                    "Document content retained for workflow review:\n"
+                    f"{action.content or ''}"
+                )
             result = ActionResult(action, True, self._truncate(output))
             logger.info(
                 "workspace action succeeded kind=%s output_chars=%d",

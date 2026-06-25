@@ -36,6 +36,13 @@ class ActionParsingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "valid JSON object"):
             parse_action("I will inspect the repository now.")
 
+    def test_unsupported_kind_reports_received_and_supported_values(self) -> None:
+        with self.assertRaisesRegex(
+            ValueError,
+            "received 'scan_directory'.*list_files",
+        ):
+            parse_action('{"kind":"scan_directory","path":"src"}')
+
 
 if __name__ == "__main__":
     unittest.main()
